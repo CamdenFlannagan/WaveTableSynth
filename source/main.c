@@ -10,9 +10,11 @@
 #define SCREEN_WIDTH 256
 #define SCREEN_HEIGHT 192
 #define SCREEN_PADDING 10
-#define SAMPLE_LENGTH (SCREEN_WIDTH - 2*SCREEN_PADDING + 1)
+#define SAMPLE_LENGTH (SCREEN_WIDTH - 2*SCREEN_PADDING - 1)
+#define GAIN 100
 
-#define SAMPLING_RATE 25000
+#define SAMPLING_RATE 44150
+#define BUFFER_SIZE 3600
 
 // PianoKeys was copied from the addon.c example program for devkitPro
 typedef struct {
@@ -62,7 +64,7 @@ int pitches[] = {
 };
 
 int pitch = 3;
-int octave = 5;
+int octave = 3;
 
 s8 sample[SAMPLE_LENGTH];
 
@@ -71,15 +73,20 @@ s8 sample[SAMPLE_LENGTH];
  * also increments time for the SoundInfo
  */
 int getPhase(struct SoundInfo * sound, int freq) {
-	return ((sound->time++ * freq * SAMPLE_LENGTH) / SAMPLING_RATE) % SAMPLE_LENGTH;
+	int phase = ((sound->time++ * freq * SAMPLE_LENGTH) / SAMPLING_RATE);
+	if (phase >= SAMPLE_LENGTH) sound->time = 0;
+	//if (sound->time > (freq * SAMPLING_RATE)) sound->time = 0;
+	//return phase % SAMPLE_LENGTH;
+	return phase;
 }
 
 /**
  * given a SoundInfo, return
  */
-s8 getOutputSample(struct SoundInfo * sound, int freq) {
+s16 getOutputSample(struct SoundInfo * sound, int freq) {
 	if (sound->playing) {
-		return sample[getPhase(sound, freq)];
+		//if (sound->time % 10000 == 0) fprintf(stderr, "freq: %d\n", freq);
+		return GAIN * sample[getPhase(sound, freq)];
 	} else {
 		return 0;
 	}
@@ -96,8 +103,11 @@ void stopSound(struct SoundInfo * sound) {
 
 /**
  * updates the sounds array according to which keys are pressed
+ * 
+ * returns the sum of the output samples
  */
 void updatePianoKeysHeld() {
+
 	PianoKeys down;
 	PianoKeys held;
 	PianoKeys up;
@@ -106,8 +116,7 @@ void updatePianoKeysHeld() {
 	// oh well. ¯\_(ツ)_/¯
 	guitarGripIsInserted();
 
-	if (pianoIsInserted())
-	{
+	if (pianoIsInserted()) {
 		pianoScanKeys();
 		down.VAL = pianoKeysDown();
 		held.VAL = pianoKeysHeld();
@@ -123,7 +132,7 @@ void updatePianoKeysHeld() {
 				startSound(&sounds[i]);
 			}
 			else if (held.VAL & 1<<bitfieldShift) {
-			
+				
 			}
 			// if the key was just released kill the sound.
 			else if (up.VAL & 1<<bitfieldShift) {
@@ -165,77 +174,13 @@ bool isInBounds(int i, int j) {
 		return true;
 }
 
-void plotLineLow(int x0, int y0, int x1, int y1) {
-    int dx = x1 - x0;
-    int dy = y1 - y0;
-    int yi = 1;
-    if (dy < 0) {
-        yi = -1;
-        dy = -dy;
-	}
-    int D = (2 * dy) - dx;
-    int y = y0;
-
-	for (int x = x0; x <= x1; x++) {
-        setPixel(x, y);
-        if (D > 0) {
-            y = y + yi;
-            D = D + (2 * (dy - dx));
-		} else {
-            D = D + 2*dy;
-		}
-	}
-}
-
-void plotLineHigh(int x0, int y0, int x1, int y1) {
-    int dx = x1 - x0;
-    int dy = y1 - y0;
-    int xi = 1;
-    if (dx < 0) {
-        xi = -1;
-        dx = -dx;
-	}
-    int D = (2 * dx) - dy;
-    int x = x0;
-
-	for (int y = y0; y <= y1; y++) {
-        setPixel(x, y);
-        if (D > 0) {
-            x = x + xi;
-            D = D + (2 * (dx - dy));
-		} else {
-            D = D + 2*dx;
-		}
-	}
-}
-
 /**
- * line drawing algorithm adapted from https://en.wikipedia.org/wiki/Bresenham%27s_line_algorithm
- */
-void plotLine(int x0, int y0, int x1, int y1) {
-	if (abs(y1 - y0) < abs(x1 - x0)) {
-        if (x0 > x1)
-            plotLineLow(x1, y1, x0, y0);
-        else
-            plotLineLow(x0, y0, x1, y1);
-	} else {
-        if (y0 > y1)
-            plotLineHigh(x1, y1, x0, y0);
-        else
-            plotLineHigh(x0, y0, x1, y1);
-	}
-}
-
-/**
- * A terrible draw line function. Barely works. I'll make it better if it sounds bad
+ * trashiest line drawing algorithm in existence.
+ * but it has heart <3
  */
 void drawLine(int x1, int y1, int x2, int y2) {
-	//plotLine(x1, y1, x2, y2);
-	
 	if (x1 == x2) {
 		setPixel(x1, y1);
-		//if (isInBounds(x1, y1)) fprintf(stderr, "umm... now in bounds\n");
-		//else fprintf(stderr, "umm... now out of bounds\n");
 		return;	
 	}
 	if (x2 < x1) {
@@ -246,13 +191,9 @@ void drawLine(int x1, int y1, int x2, int y2) {
 		y1 = y2;
 		y2 = temp;
 	}
-
-	//fprintf(stderr, "this code is reached\n");
-
 	for (int i = x1; i <= x2; i++) {
 		int currX = i;
-		int currY = y1 + ((y2 - y1) / ((x2 - x1) / (i - x1))); // trashiest line drawing algorithm in existance.
-															   // but it has heart <3
+		int currY = y1 + ((y2 - y1) / ((x2 - x1) / (i - x1)));
 		setPixel(currX, currY);
 	}
 	
@@ -266,12 +207,13 @@ void drawLine(int x1, int y1, int x2, int y2) {
 mm_word on_stream_request( mm_word length, mm_addr dest, mm_stream_formats format ) {
 //----------------------------------------------------------------------------------
 
-	s8 *target = dest;
+	s16 *target = dest;
 
 	int len = length;
 	for( ; len; len-- )
 	{
 		updatePianoKeysHeld();
+
 		int sample = 0;
 		for (int i = 0; i < 13; i++) {
 			sample += getOutputSample(&sounds[i], pitches[pitch + (12 * octave) + i]);
@@ -348,9 +290,9 @@ int main( void ) {
 	//----------------------------------------------------------------
 	mm_stream mystream;
 	mystream.sampling_rate	= SAMPLING_RATE;			// sampling rate = 25khz
-	mystream.buffer_length	= 1200;						// buffer length = 1200 samples
+	mystream.buffer_length	= BUFFER_SIZE;						// buffer length = 1200 samples
 	mystream.callback		= on_stream_request;		// set callback function
-	mystream.format			= MM_STREAM_8BIT_MONO;		// format = mono 8-bit
+	mystream.format			= MM_STREAM_16BIT_MONO;		// format = mono 8-bit
 	mystream.timer			= MM_TIMER0;				// use hardware timer 0
 	mystream.manual			= true;						// use manual filling
 	mmStreamOpen( &mystream );
@@ -373,9 +315,7 @@ int main( void ) {
 		
 		// update stream
 		mmStreamUpdate();
-		
 
-		
 		// wait until next frame
 		swiWaitForVBlank();
 		
