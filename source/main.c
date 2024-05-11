@@ -10,11 +10,11 @@
 #define SCREEN_WIDTH 256
 #define SCREEN_HEIGHT 192
 #define SCREEN_PADDING 10
-#define SAMPLE_LENGTH (SCREEN_WIDTH - 2*SCREEN_PADDING - 1)
-#define GAIN 100
+#define SAMPLE_LENGTH (SCREEN_WIDTH - 2*SCREEN_PADDING + 2)
+#define GAIN 50
 
 #define SAMPLING_RATE 44150
-#define BUFFER_SIZE 3600
+#define BUFFER_SIZE 1600
 
 // PianoKeys was copied from the addon.c example program for devkitPro
 typedef struct {
@@ -66,7 +66,7 @@ int pitches[] = {
 int pitch = 3;
 int octave = 3;
 
-s8 sample[SAMPLE_LENGTH];
+s16 sample[SAMPLE_LENGTH];
 
 /**
  * give a SoundInfo and get the desired sample phase
@@ -74,10 +74,9 @@ s8 sample[SAMPLE_LENGTH];
  */
 int getPhase(struct SoundInfo * sound, int freq) {
 	int phase = ((sound->time++ * freq * SAMPLE_LENGTH) / SAMPLING_RATE);
-	if (phase >= SAMPLE_LENGTH) sound->time = 0;
+	if (phase > 8*SAMPLE_LENGTH) sound->time = 0;
 	//if (sound->time > (freq * SAMPLING_RATE)) sound->time = 0;
-	//return phase % SAMPLE_LENGTH;
-	return phase;
+	return phase % SAMPLE_LENGTH;
 }
 
 /**
@@ -106,12 +105,14 @@ void stopSound(struct SoundInfo * sound) {
  * 
  * returns the sum of the output samples
  */
-void updatePianoKeysHeld() {
+s16 updatePianoKeysHeld() {
 
 	PianoKeys down;
 	PianoKeys held;
 	PianoKeys up;
 	
+	s16 sample = 0;
+
 	// for whatever reason, the piano stuff won't work without checking for the guitar grip first.
 	// oh well. ¯\_(ツ)_/¯
 	guitarGripIsInserted();
@@ -132,7 +133,7 @@ void updatePianoKeysHeld() {
 				startSound(&sounds[i]);
 			}
 			else if (held.VAL & 1<<bitfieldShift) {
-				
+				//sample += getOutputSample()	
 			}
 			// if the key was just released kill the sound.
 			else if (up.VAL & 1<<bitfieldShift) {
@@ -140,6 +141,7 @@ void updatePianoKeysHeld() {
 			}
 		}
 	}
+	return sample;
 }
 
 /**
@@ -212,7 +214,7 @@ mm_word on_stream_request( mm_word length, mm_addr dest, mm_stream_formats forma
 	int len = length;
 	for( ; len; len-- )
 	{
-		updatePianoKeysHeld();
+		//updatePianoKeysHeld();
 
 		int sample = 0;
 		for (int i = 0; i < 13; i++) {
@@ -312,6 +314,9 @@ int main( void ) {
 
 	while( 1 )
 	{
+		//if (sounds[0].playing) fprintf(stderr, "sounds[0].playing == true\n");
+		//else fprintf(stderr, "sounds[0].playing == false\n");
+		updatePianoKeysHeld();
 		
 		// update stream
 		mmStreamUpdate();
@@ -332,6 +337,10 @@ int main( void ) {
 			pitch++;
 		if (keysD & KEY_LEFT)
 			pitch--;
+		if (keysD & KEY_X) {
+			mmStreamClose();
+			mmStreamOpen( &mystream );
+		}
 		
 		int keysH = keysHeld();
 		touchRead(&touch);
