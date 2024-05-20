@@ -378,7 +378,7 @@ class Slider : public Editor {
 public:
     Slider(int &morphTimeInit) : time(morphTimeInit) {
         previousX = 0;
-        maxTime = SAMPLE_RATE * 10; // set max time to ten seconds
+        maxVal = SAMPLE_RATE * 10; // set max time to ten seconds
         drawSliderLine(SCREEN_PADDING);
     }
 
@@ -405,7 +405,7 @@ public:
         previousX = x;
 
         // scale x properly and set the internal time variable
-        time = ((x - SCREEN_PADDING) * maxTime) / TABLE_LENGTH;
+        time = ((x - SCREEN_PADDING) * maxVal) / TABLE_LENGTH;
     }
 
     /**
@@ -419,7 +419,7 @@ public:
 private:
     int &time;
     int previousX;
-    int maxTime;
+    int maxVal;
     touchPosition touch;
     void drawSliderLine(int x) {
         for (int i = SCREEN_PADDING; i < SCREEN_HEIGHT - SCREEN_PADDING) {

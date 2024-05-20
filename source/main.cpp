@@ -9,7 +9,7 @@
 #define TABLE_MAX (SCREEN_HEIGHT - 2*SCREEN_PADDING + 1)
 
 #define SAMPLING_RATE 44150
-#define BUFFER_SIZE 1600
+#define BUFFER_SIZE 2400
 
 /**
  * What screens do we need?
@@ -35,6 +35,11 @@ s16 wave2Array[TABLE_LENGTH];
 s16 morphArray[TABLE_LENGTH];
 int morphTime;
 struct SoundInfo sounds[13];
+
+/**
+ * false if using Morph algorithm, true if using Swipe algorithm
+ */
+bool algorithm;
 
 class Editor {
 public:
@@ -259,9 +264,9 @@ private:
 
 class Slider : public Editor {
 public:
-    Slider(int &morphTimeInit) : time(morphTimeInit) {
+    Slider(int &val_) : val(val_) {
         previousX = SCREEN_PADDING;
-        maxTime = SAMPLING_RATE * 10; // set max time to ten seconds
+        maxVal = SAMPLING_RATE * 10; // set max time to ten seconds
         drawSliderLine(SCREEN_PADDING);
     }
 
@@ -285,14 +290,14 @@ public:
             previousX = x;
 
             // scale x properly and set the internal time variable
-            time = ((x - SCREEN_PADDING) * maxTime) / TABLE_LENGTH;
+            val = ((x - SCREEN_PADDING) * maxVal) / TABLE_LENGTH;
         }
     }
 
 private:
-    int &time;
+    int &val;
     int previousX;
-    int maxTime;
+    int maxVal;
     touchPosition touch;
     void drawSliderLine(int x) {
         if (x < SCREEN_PADDING)
@@ -309,7 +314,7 @@ private:
 
 class Switch : public Editor {
 public:
-    Switch(bool &val_) val(val_) {}
+    Switch(bool &val_) : val(val_) {}
 
     void handleTouch() {
         int keysH = keysHeld();
@@ -334,14 +339,14 @@ private:
     void drawSwitch() {
         for (int i = SCREEN_PADDING; i < SCREEN_WIDTH - SCREEN_PADDING; i++) {
             for (int j = SCREEN_PADDING; j < SCREEN_HEIGHT - SCREEN_PADDING; j++) {
-                if (i >= SCREEN_WIDTH / 2 && val)
+                if ((i >= SCREEN_WIDTH / 2) ^ val)
                     VRAM_A[256 * j + i] = RGB15(0, 0, 0);
                 else
                     VRAM_A[256 * j + i] = RGB15(31, 31, 31);
             }
         }
     }
-}
+};
 
 class Audio {
 public:
@@ -352,7 +357,7 @@ public:
         for (int i = 0; i < 13; i++) {
             output += getOutputSample(&(sounds[i]));
         }
-        return output;
+        return output - 32761; // add minimum negative plus a few (I don't want to think about edge cases anymore)
     }
 private:
     int gain;
@@ -376,16 +381,25 @@ private:
         sound->framesElapsed++;
     }
 
-    s16 getOutputSample(struct SoundInfo * sound) {
+    int getOutputSample(struct SoundInfo * sound) {
         if (sound->playing) {
             int phase = getWavePhase(sound);
             s16 sample1 = wave1Array[phase];
             s16 sample2 = wave2Array[phase];
             
-            int output = Lerp::lerp(sample1, sample2, morphArray[getMorphIndex(sound)], TABLE_MAX - 1);
+            int output;
+            if (algorithm) { // using the Swipe algorithm
+                int split = Lerp::lerp(0, TABLE_LENGTH, morphArray[getMorphIndex(sound)], TABLE_MAX - 1);
+                if (phase > split)
+                    output = sample1;
+                else
+                    output = sample2; 
+            } else { // using the Morph algorithm
+                output = Lerp::lerp(sample1, sample2, morphArray[getMorphIndex(sound)], TABLE_MAX - 1);
+            }
 
             incrementFrameCount(sound);
-            return gain * (output - 32761); // add minimum negative plus a few (I don't want to think about edge cases anymore)
+            return gain * output;
         } else {
             return 0;
         }
@@ -399,10 +413,11 @@ public:
         waveTableTwo(wave2Array),
         morphShapeTable(morphArray),
         morphTimeSlider(morphTime),
+        algorithmSwitch(algorithm),
         audio(54),
-        editorArray {&waveTableOne, &waveTableTwo, &morphShapeTable, &morphTimeSlider},
+        editorArray {&waveTableOne, &waveTableTwo, &morphShapeTable, &morphTimeSlider, &algorithmSwitch},
         editorArrayIndex {0},
-        numberOfScreens {4}
+        numberOfScreens {5}
     {
         editorArray[editorArrayIndex]->draw();
     }
@@ -447,9 +462,10 @@ private:
     TableEditor waveTableTwo;
     TableEditor morphShapeTable;
     Slider morphTimeSlider;
+    Switch algorithmSwitch;
     Audio audio;
     Piano piano;
-    Editor * editorArray[4];
+    Editor * editorArray[5];
     int editorArrayIndex;
     int numberOfScreens;
     
