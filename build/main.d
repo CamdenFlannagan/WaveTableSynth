@@ -1,4 +1,5 @@
-main.o: C:/devkitPro/examples/nds/camde_work/WaveTableSynth/source/main.c \
+main.o: \
+ C:/devkitPro/examples/nds/camde_work/WaveTableSynth/source/main.cpp \
  C:/devkitPro/libnds/include/nds.h \
  C:/devkitPro/libnds/include/nds/libversion.h \
  C:/devkitPro/libnds/include/nds/ndstypes.h \
