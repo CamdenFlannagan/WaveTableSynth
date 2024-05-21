@@ -9,8 +9,8 @@
 #define TABLE_LENGTH (SCREEN_WIDTH - 2*SCREEN_PADDING + 1)
 #define TABLE_MAX (SCREEN_HEIGHT - 2*SCREEN_PADDING + 1)
 
-#define SAMPLING_RATE 16000
-#define BUFFER_SIZE 1600
+#define SAMPLING_RATE 10000
+#define BUFFER_SIZE 1200
 
 #define DEPOP_FRAMES 50 // enforced attack and release to get rid of the pop
 
@@ -37,14 +37,14 @@ struct SoundInfo {
 
 s16 wave1Array[TABLE_LENGTH];
 s16 wave2Array[TABLE_LENGTH];
-s16 morphArray[TABLE_LENGTH];
-int morphTime;
+s16 transition[TABLE_LENGTH];
+int transitionTime;
 struct SoundInfo sounds[13];
 
 /**
- * false if using Morph algorithm, true if using Swipe algorithm
+ * 0 if using Morph algorithm, 1 if using Swipe algorithm, 2 if using Combination of both algorithms
  */
-bool algorithm;
+int algorithm;
 
 class Editor {
 public:
@@ -62,8 +62,8 @@ public:
      * clear the editor
      */
     void clear() {
-        for (int i = SCREEN_PADDING; i < SCREEN_WIDTH - SCREEN_PADDING; i++) {
-            for (int j = SCREEN_PADDING; j < SCREEN_HEIGHT - SCREEN_PADDING; j++) {
+        for (int i = SCREEN_PADDING; i <= SCREEN_WIDTH - SCREEN_PADDING; i++) {
+            for (int j = SCREEN_PADDING; j <= SCREEN_HEIGHT - SCREEN_PADDING; j++) {
                 VRAM_A[256 * j + i] = RGB15(0, 0, 0);
             }
         }
@@ -235,12 +235,26 @@ private:
         if (y < SCREEN_PADDING) y = SCREEN_PADDING;
         if (y > SCREEN_HEIGHT - SCREEN_PADDING) y = SCREEN_HEIGHT - SCREEN_PADDING;
         
+        // display guiding lines that divide the screen equally into twelve parts
+        int tableX = x - SCREEN_PADDING;
+        bool guider = false;
+        for (int k = 1; k < 12; k++) {
+            if (tableX == k*TABLE_LENGTH/12) {
+                guider = true;
+                break;
+            } 
+        }
+
         // make the pixel at position white, and everything above and below black
         for (int i = SCREEN_PADDING; i <= SCREEN_HEIGHT - SCREEN_PADDING; i++) {
             if (i == y)
                 VRAM_A[256 * i + x] = RGB15(31, 31, 31);
-            else
-                VRAM_A[256 * i + x] = RGB15(0, 0, 0);
+            else {
+                if (guider)
+                    VRAM_A[256 * i + x] = RGB15(10, 10, 10);
+                else
+                    VRAM_A[256 * i + x] = RGB15(0, 0, 0);
+            }
         }
 
         table[x - SCREEN_PADDING] = y - SCREEN_PADDING;
@@ -320,7 +334,7 @@ private:
 
 class Switch : public Editor {
 public:
-    Switch(bool &val_) : val(val_) {}
+    Switch(int &val_, int numOptions_) : val(val_), numOptions{numOptions_} {}
 
     void handleTouch() {
         int keysH = keysHeld();
@@ -329,6 +343,14 @@ public:
             
             // asign the value
             val = touch.px >= SCREEN_WIDTH / 2;
+
+            int x = touch.px - SCREEN_PADDING;
+            for (int i = 0; i < numOptions; i++) {
+                if ((i*TABLE_LENGTH)/numOptions <= x && x < ((i + 1)*TABLE_LENGTH)/numOptions) {
+                    val = i;
+                    break;
+                }
+            }
 
             // redisplay the switch
             drawSwitch();
@@ -339,16 +361,18 @@ public:
         drawSwitch();
     }
 private:
-    bool &val;
+    int &val;
+    int numOptions;
     touchPosition touch;
 
     void drawSwitch() {
-        for (int i = SCREEN_PADDING; i < SCREEN_WIDTH - SCREEN_PADDING; i++) {
-            for (int j = SCREEN_PADDING; j < SCREEN_HEIGHT - SCREEN_PADDING; j++) {
-                if ((i >= SCREEN_WIDTH / 2) ^ val)
-                    VRAM_A[256 * j + i] = RGB15(0, 0, 0);
-                else
+        for (int i = SCREEN_PADDING; i <= SCREEN_WIDTH - SCREEN_PADDING; i++) {
+            for (int j = SCREEN_PADDING; j <= SCREEN_HEIGHT - SCREEN_PADDING; j++) {
+                int x = i - SCREEN_PADDING;
+                if ((val*TABLE_LENGTH)/numOptions <= x && x < ((val + 1)*TABLE_LENGTH)/numOptions)
                     VRAM_A[256 * j + i] = RGB15(31, 31, 31);
+                else
+                    VRAM_A[256 * j + i] = RGB15(0, 0, 0);
             }
         }
     }
@@ -390,8 +414,8 @@ private:
 	    return phase % TABLE_LENGTH;
     }
 
-    int getMorphIndex(struct SoundInfo * sound) {
-        return lerp(0, TABLE_LENGTH - 1, sound->framesElapsed, morphTime);
+    int getTransitionIndex(struct SoundInfo * sound) {
+        return lerp(0, TABLE_LENGTH - 1, sound->framesElapsed, transitionTime);
     }
 
     void incrementFrameCount(struct SoundInfo * sound) {
@@ -405,15 +429,35 @@ private:
             s16 sample1 = wave1Array[phase];
             s16 sample2 = wave2Array[phase];
             
+            int transitionValue = transition[getTransitionIndex(sound)];
+
             int output;
-            if (algorithm) { // using the Swipe algorithm
-                int split = lerp(0, TABLE_LENGTH, morphArray[getMorphIndex(sound)], TABLE_MAX - 1);
-                if (phase > split)
-                    output = sample1;
-                else
-                    output = sample2; 
-            } else { // using the Morph algorithm
-                output = lerp(sample1, sample2, morphArray[getMorphIndex(sound)], TABLE_MAX - 1);
+            switch (algorithm) {
+                case 0: { // Morph algorithm
+                    output = lerp(sample1, sample2, transitionValue, TABLE_MAX - 1);
+                    break;
+                }
+                case 1: { // Swipe algorithm
+                    int split = lerp(0, TABLE_LENGTH, transitionValue, TABLE_MAX - 1);
+                    if (phase > split)
+                        output = sample1;
+                    else
+                        output = sample2;
+                    break;
+                }
+                case 2: { // using a combination of both algorithms
+                    int morph = lerp(sample1, sample2, transitionValue, TABLE_MAX - 1);
+                    int swipe;
+                    int split = lerp(0, TABLE_LENGTH, transitionValue, TABLE_MAX - 1);
+                    if (phase > split)
+                        swipe = sample1;
+                    else
+                        swipe = sample2;
+                    output = lerp(swipe, morph, transitionValue, TABLE_MAX - 1);
+                    break;
+                }
+                default: // if the default is reached, something went wrong
+                    output = 0;
             }
 
             // if the note just started, depop by lerping to initial output
@@ -446,9 +490,9 @@ public:
     App() : 
         waveTableOne(wave1Array),
         waveTableTwo(wave2Array),
-        morphShapeTable(morphArray),
-        morphTimeSlider(morphTime),
-        algorithmSwitch(algorithm),
+        morphShapeTable(transition),
+        morphTimeSlider(transitionTime),
+        algorithmSwitch(algorithm, 3),
         audio(54),
         editorArray {&waveTableOne, &waveTableTwo, &morphShapeTable, &morphTimeSlider, &algorithmSwitch},
         editorArrayIndex {0},
@@ -620,9 +664,9 @@ int main( void ) {
     for (int i = 0; i < TABLE_LENGTH; i++) {
         wave1Array[i] = 0;
         wave2Array[i] = 0;
-        morphArray[i] = 0;
+        transition[i] = 0;
     }
-    morphTime = 0;
+    transitionTime = 0;
     for (int i = 0; i < 13; i++) {
         sounds[i].playing = false;
         sounds[i].stopping = false;
