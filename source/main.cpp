@@ -27,6 +27,7 @@
 struct SoundInfo {
 	bool playing; // is the note currently playing?
     bool stopping; // used for depopping
+    bool pingPongDirection; // true for forward, false for backwards
 	int framesElapsed; // frames elapsed since start of tone
     int phaseFramesElapsed; // frames elapsed used for calculating phase. will be modded and deviate from actual frames elapsed
     int morphTableIndex; // the current position in the morph table
@@ -45,6 +46,11 @@ struct SoundInfo sounds[13];
  * 0 if using Morph algorithm, 1 if using Swipe algorithm, 2 if using Combination of both algorithms
  */
 int algorithm;
+
+/**
+ * 0 for no transition cycle, 1 for looping through transition table, 2 for ping-pong
+ */
+int transitionCycle;
 
 class Editor {
 public:
@@ -168,6 +174,7 @@ public:
                     sounds[i].morphTableIndex = 0;
                     sounds[i].playing = false;
                     sounds[i].stopping = true;
+                    sounds[i].pingPongDirection = true;
                 }
             }
         }
@@ -420,7 +427,24 @@ private:
 
     void incrementFrameCount(struct SoundInfo * sound) {
         sound->phaseFramesElapsed++;
-        sound->framesElapsed++;
+        switch (transitionCycle) {
+            case 0:
+                sound->framesElapsed++;
+                break;
+            case 1:
+                sound->framesElapsed = (sound->framesElapsed + 1) % transitionTime;
+                break;
+            case 2: {
+                if (sound->pingPongDirection == true) {
+                    if (sound->framesElapsed++ >= transitionTime)
+                        sound->pingPongDirection = false;
+                } else {
+                    if (sound->framesElapsed-- <= 0)
+                        sound->pingPongDirection = true;
+                }
+                break;
+            }
+        }
     }
 
     int getOutputSample(struct SoundInfo * sound) {
@@ -492,11 +516,12 @@ public:
         waveTableTwo(wave2Array),
         morphShapeTable(transition),
         morphTimeSlider(transitionTime),
+        transitionCycleSwitch(transitionCycle, 3),
         algorithmSwitch(algorithm, 3),
         audio(54),
-        editorArray {&waveTableOne, &waveTableTwo, &morphShapeTable, &morphTimeSlider, &algorithmSwitch},
+        editorArray {&waveTableOne, &waveTableTwo, &morphShapeTable, &morphTimeSlider, &transitionCycleSwitch, &algorithmSwitch},
         editorArrayIndex {0},
-        numberOfScreens {5}
+        numberOfScreens {6}
     {
         editorArray[editorArrayIndex]->draw();
     }
@@ -541,10 +566,11 @@ private:
     TableEditor waveTableTwo;
     TableEditor morphShapeTable;
     Slider morphTimeSlider;
+    Switch transitionCycleSwitch;
     Switch algorithmSwitch;
     Audio audio;
     Piano piano;
-    Editor * editorArray[5];
+    Editor * editorArray[6];
     int editorArrayIndex;
     int numberOfScreens;
     
@@ -670,6 +696,7 @@ int main( void ) {
     for (int i = 0; i < 13; i++) {
         sounds[i].playing = false;
         sounds[i].stopping = false;
+        sounds[i].pingPongDirection = true;
         sounds[i].framesElapsed = 0;
         sounds[i].phaseFramesElapsed = 0;
         sounds[i].morphTableIndex = 0;
