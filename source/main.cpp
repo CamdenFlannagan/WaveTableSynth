@@ -1,6 +1,7 @@
 #include <nds.h>
 #include <maxmod9.h>
 #include <stdio.h>
+#include "nds/ndstypes.h"
 
 #define SCREEN_WIDTH 256
 #define SCREEN_HEIGHT 192
@@ -8,8 +9,10 @@
 #define TABLE_LENGTH (SCREEN_WIDTH - 2*SCREEN_PADDING + 1)
 #define TABLE_MAX (SCREEN_HEIGHT - 2*SCREEN_PADDING + 1)
 
-#define SAMPLING_RATE 44150
-#define BUFFER_SIZE 2400
+#define SAMPLING_RATE 16000
+#define BUFFER_SIZE 1600
+
+#define DEPOP_FRAMES 50 // enforced attack and release to get rid of the pop
 
 /**
  * What screens do we need?
@@ -23,11 +26,13 @@
 
 struct SoundInfo {
 	bool playing; // is the note currently playing?
+    bool stopping; // used for depopping
 	int framesElapsed; // frames elapsed since start of tone
     int phaseFramesElapsed; // frames elapsed used for calculating phase. will be modded and deviate from actual frames elapsed
-    int morphTableIndex;
-    int freq;
-	s8 outputSample; // the sample to output
+    int morphTableIndex; // the current position in the morph table
+    int freq; // the frequency of the sound to be played
+    int depopFramesElapsed; // used for depopping
+    int lastSampleOutputted; // used for depopping
 };
 
 s16 wave1Array[TABLE_LENGTH];
@@ -162,6 +167,7 @@ public:
                     sounds[i].phaseFramesElapsed = 0;
                     sounds[i].morphTableIndex = 0;
                     sounds[i].playing = false;
+                    sounds[i].stopping = true;
                 }
             }
         }
@@ -362,8 +368,22 @@ public:
 private:
     int gain;
 
+    /**
+     * @param v0 the first value for the lerp
+     * @param v1 the second value for the lerp
+     * @param dialCurrent how many steps have taken place
+     * @param dialMax how many steps are there between v0 and v1
+     */
+    int lerp(int v0, int v1, int dialCurrent, int dialMax) {
+        if (dialCurrent <= 0)
+            return v0;
+        if (dialCurrent >= dialMax)
+            return v1;
+        return v0 + ((dialCurrent * (v1 - v0)) / dialMax);
+    }
+
     int getWavePhase(struct SoundInfo * sound) {
-	    int phase = ((sound->phaseFramesElapsed * sound->freq * TABLE_LENGTH) / SAMPLING_RATE);
+	    int phase = div32((sound->phaseFramesElapsed * sound->freq * TABLE_LENGTH), SAMPLING_RATE);
         if (phase > 8 * TABLE_LENGTH) {
             sound->phaseFramesElapsed = 0;
         }
@@ -371,9 +391,7 @@ private:
     }
 
     int getMorphIndex(struct SoundInfo * sound) {
-        int test = Lerp::lerp(0, TABLE_LENGTH - 1, sound->framesElapsed, morphTime);
-        //fprintf(stderr, "morph index: %d\n", test);
-        return test;
+        return lerp(0, TABLE_LENGTH - 1, sound->framesElapsed, morphTime);
     }
 
     void incrementFrameCount(struct SoundInfo * sound) {
@@ -389,19 +407,36 @@ private:
             
             int output;
             if (algorithm) { // using the Swipe algorithm
-                int split = Lerp::lerp(0, TABLE_LENGTH, morphArray[getMorphIndex(sound)], TABLE_MAX - 1);
+                int split = lerp(0, TABLE_LENGTH, morphArray[getMorphIndex(sound)], TABLE_MAX - 1);
                 if (phase > split)
                     output = sample1;
                 else
                     output = sample2; 
             } else { // using the Morph algorithm
-                output = Lerp::lerp(sample1, sample2, morphArray[getMorphIndex(sound)], TABLE_MAX - 1);
+                output = lerp(sample1, sample2, morphArray[getMorphIndex(sound)], TABLE_MAX - 1);
             }
 
-            incrementFrameCount(sound);
+            // if the note just started, depop by lerping to initial output
+            if (sound->depopFramesElapsed < DEPOP_FRAMES) {
+                output = lerp(0, output, sound->depopFramesElapsed++, DEPOP_FRAMES);
+            } else {
+                incrementFrameCount(sound);
+            }
+            
+            sound->lastSampleOutputted = output;
+
             return gain * output;
         } else {
-            return 0;
+            int output;
+            if (sound->stopping) {
+                output = lerp(0, sound->lastSampleOutputted, sound->depopFramesElapsed--, DEPOP_FRAMES);
+                if (sound->depopFramesElapsed <= 0)
+                    sound->stopping = false;
+            } else {
+                output = 0;
+            }
+
+            return output;
         }
     }
 };
@@ -499,7 +534,16 @@ private:
         int keysH = keysHeld();
         if (keysH & KEY_X) {
             sounds[0].playing = true;
-            sounds[0].freq = 440;
+            sounds[0].freq = 220;
+
+            sounds[4].playing = true;
+            sounds[4].freq = 275;
+
+            sounds[7].playing = true;
+            sounds[7].freq = 330;
+
+            sounds[9].playing = true;
+            sounds[9].freq = 770 / 2;
         }
         int keysU = keysUp();
         if (keysU & KEY_X) {
@@ -507,6 +551,25 @@ private:
             sounds[0].phaseFramesElapsed = 0;
             sounds[0].morphTableIndex = 0;
             sounds[0].playing = false;
+            sounds[0].stopping = true;
+
+            sounds[4].framesElapsed = 0;
+            sounds[4].phaseFramesElapsed = 0;
+            sounds[4].morphTableIndex = 0;
+            sounds[4].playing = false;
+            sounds[4].stopping = true;
+
+            sounds[7].framesElapsed = 0;
+            sounds[7].phaseFramesElapsed = 0;
+            sounds[7].morphTableIndex = 0;
+            sounds[7].playing = false;
+            sounds[7].stopping = true;
+
+            sounds[9].framesElapsed = 0;
+            sounds[9].phaseFramesElapsed = 0;
+            sounds[9].morphTableIndex = 0;
+            sounds[9].playing = false;
+            sounds[9].stopping = true;
         }
 		/*if (keysD & KEY_X) {
 			mmStreamClose();
@@ -562,11 +625,13 @@ int main( void ) {
     morphTime = 0;
     for (int i = 0; i < 13; i++) {
         sounds[i].playing = false;
+        sounds[i].stopping = false;
         sounds[i].framesElapsed = 0;
         sounds[i].phaseFramesElapsed = 0;
         sounds[i].morphTableIndex = 0;
         sounds[i].freq = 0;
-        sounds[i].outputSample = 0;
+        sounds[i].depopFramesElapsed = 0;
+        sounds[i].lastSampleOutputted = 0;
     }
 
 	//----------------------------------------------------------------
