@@ -55,6 +55,9 @@ int transitionCycle;
 
 class Editor {
 public:
+    const char *description;
+    Editor(const char *description_) : description{description_} {}
+
     /**
      * draw the state of the editor upon switching to it
      */
@@ -64,6 +67,14 @@ public:
      * what does the editor do when the touchpad is interacted with?
      */
     virtual void handleTouch() = 0;
+
+    /**
+     * display the information about the current editor
+     */
+    void printInfo() {
+        consoleClear();
+        printf("%s", description);
+    }
 
     /**
      * clear the editor
@@ -235,7 +246,7 @@ private:
 
 class TableEditor : public Editor {
 public:
-    TableEditor(s16 (&table_)[TABLE_LENGTH]) : table(table_) {
+    TableEditor(const char * description, s16 (&table_)[TABLE_LENGTH]) : Editor(description), table(table_) {
         for (int i = 0; i < TABLE_LENGTH; i++)
             table[i] = 0;
         hasLifted = true;
@@ -244,6 +255,7 @@ public:
     }
  
     void draw() {
+        printInfo();
         for (int i = 0; i < TABLE_LENGTH; i++) {
             int x = i + SCREEN_PADDING;
             int y = table[i] + SCREEN_PADDING;
@@ -334,12 +346,13 @@ private:
 
 class Slider : public Editor {
 public:
-    Slider(int &val_, int maxVal_) : val(val_), maxVal{maxVal_} {
+    Slider(const char * description, int &val_, int maxVal_) : Editor(description), val(val_), maxVal{maxVal_} {
         previousX = SCREEN_PADDING;
         drawSliderLine(SCREEN_PADDING);
     }
 
     void draw() {
+        printInfo();
         clear();
         drawSliderLine(previousX);
     }
@@ -349,9 +362,12 @@ public:
         if (keysH & KEY_TOUCH) {
             touchRead(&touch);
             
-            // make sure x is within an acceptable range
             int x = touch.px;
-            
+            if (x < SCREEN_PADDING)
+                x = SCREEN_PADDING;
+            if (x > SCREEN_WIDTH - SCREEN_PADDING)
+                x = SCREEN_WIDTH - SCREEN_PADDING;
+
             // draw the line on the UI
             drawSliderLine(x);
 
@@ -369,11 +385,6 @@ private:
     int maxVal;
     touchPosition touch;
     void drawSliderLine(int x) {
-        if (x < SCREEN_PADDING)
-            x = SCREEN_PADDING;
-        if (x > SCREEN_WIDTH - SCREEN_PADDING)
-            x = SCREEN_WIDTH - SCREEN_PADDING;
-
         for (int i = SCREEN_PADDING; i <= SCREEN_HEIGHT - SCREEN_PADDING; i++) {
             VRAM_A[256 * i + previousX] = RGB15(0, 0, 0);
             VRAM_A[256 * i + x] = RGB15(31, 31, 31);
@@ -383,7 +394,7 @@ private:
 
 class Switch : public Editor {
 public:
-    Switch(int &val_, int numOptions_) : val(val_), numOptions{numOptions_} {}
+    Switch(const char * description, int &val_, int numOptions_) : Editor(description), val(val_), numOptions{numOptions_} {}
 
     void handleTouch() {
         int keysH = keysHeld();
@@ -407,6 +418,7 @@ public:
     }
 
     void draw() {
+        printInfo();
         drawSwitch();
     }
 private:
@@ -554,12 +566,12 @@ private:
 class App {
 public:
     App() : 
-        waveTableOne(wave1Array),
-        waveTableTwo(wave2Array),
-        morphShapeTable(transition),
-        morphTimeSlider(transitionTime, SAMPLING_RATE * 10),
-        transitionCycleSwitch(transitionCycle, 3),
-        algorithmSwitch(algorithm, 3),
+        waveTableOne("Wavetable One", wave1Array),
+        waveTableTwo("Wavetable Two", wave2Array),
+        morphShapeTable("Transition Shape", transition),
+        morphTimeSlider("Transition Time", transitionTime, SAMPLING_RATE * 10),
+        transitionCycleSwitch("Transition Cycle Mode\n1. Forward\n2. Loop\n3. Ping Pong", transitionCycle, 3),
+        algorithmSwitch("Transition Algorithm\n1. Morph\n2. Swipe\n3. Combos", algorithm, 3),
         audio(54),
         editorRing()
     {
@@ -569,10 +581,9 @@ public:
         editorRing.add(&morphShapeTable);
         editorRing.add(&waveTableTwo);
         editorRing.add(&waveTableOne);
-        editorRing.curr()->draw();
     }
     
-    void drawBorder() {
+    void initScreen() {
         // initialize the screen
         for (int i = 0; i < 256; i++) {
             for (int j = 0; j < 192; j++) {
@@ -587,6 +598,7 @@ public:
                     VRAM_A[256 * j + i] = RGB15(0, 0, 0);
             }
         }
+        editorRing.curr()->draw();
     }
 
     /**
@@ -710,14 +722,14 @@ mm_word on_stream_request( mm_word length, mm_addr dest, mm_stream_formats forma
  **********************************************************************************/
 int main( void ) {
 //---------------------------------------------------------------------------------
-	consoleDebugInit(DebugDevice_NOCASH);
+	consoleDemoInit();
 	
 	videoSetMode(MODE_FB0);
 	vramSetBankA(VRAM_A_LCD);
 
 	lcdMainOnBottom();
 
-    app.drawBorder();
+    app.initScreen();
 
     // initialize all global variables
     for (int i = 0; i < TABLE_LENGTH; i++) {
