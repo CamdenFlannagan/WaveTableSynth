@@ -1,5 +1,6 @@
 #include <nds.h>
 #include <maxmod9.h>
+#include <malloc.h>
 #include <stdio.h>
 #include "nds/ndstypes.h"
 
@@ -74,6 +75,48 @@ public:
             }
         }
     }
+};
+
+template <typename T>
+class LinkedRing {
+public:
+    LinkedRing() : current{NULL}, size{0} {}
+    void add(T datum_) {
+        size++;
+        if (current == NULL) {
+            current = new Node(NULL, datum_, NULL);;
+            current->prev = current;
+            current->next = current;
+        } else {
+            Node* newNode = new Node(current->prev, datum_, current);
+            current->prev->next = newNode;
+            current->prev = newNode;
+            current = current->prev;
+        }
+    }
+    T prev() {
+        current = current->prev;
+        return current->datum;
+    }
+    T curr() {
+        return current->datum;
+    }
+    T next() {
+        current = current->next;
+        return current->datum;
+    }
+
+private:
+    class Node {
+    public:
+        Node* prev;
+        T datum;
+        Node* next;
+        Node(Node* prev_, T datum_, Node* next_) : prev{prev_}, datum{datum_}, next{next_} {}
+    };
+
+    Node* current;
+    int size;
 };
 
 /**
@@ -291,9 +334,8 @@ private:
 
 class Slider : public Editor {
 public:
-    Slider(int &val_) : val(val_) {
+    Slider(int &val_, int maxVal_) : val(val_), maxVal{maxVal_} {
         previousX = SCREEN_PADDING;
-        maxVal = SAMPLING_RATE * 10; // set max time to ten seconds
         drawSliderLine(SCREEN_PADDING);
     }
 
@@ -515,15 +557,19 @@ public:
         waveTableOne(wave1Array),
         waveTableTwo(wave2Array),
         morphShapeTable(transition),
-        morphTimeSlider(transitionTime),
+        morphTimeSlider(transitionTime, SAMPLING_RATE * 10),
         transitionCycleSwitch(transitionCycle, 3),
         algorithmSwitch(algorithm, 3),
         audio(54),
-        editorArray {&waveTableOne, &waveTableTwo, &morphShapeTable, &morphTimeSlider, &transitionCycleSwitch, &algorithmSwitch},
-        editorArrayIndex {0},
-        numberOfScreens {6}
+        editorRing()
     {
-        editorArray[editorArrayIndex]->draw();
+        editorRing.add(&algorithmSwitch);
+        editorRing.add(&transitionCycleSwitch);
+        editorRing.add(&morphTimeSlider);
+        editorRing.add(&morphShapeTable);
+        editorRing.add(&waveTableTwo);
+        editorRing.add(&waveTableOne);
+        editorRing.curr()->draw();
     }
     
     void drawBorder() {
@@ -548,7 +594,8 @@ public:
      */
     void ExecuteOneMainLoop() {
         handleInputs();
-        editorArray[editorArrayIndex]->handleTouch();
+        //editorArray[editorArrayIndex]->handleTouch();
+        editorRing.curr()->handleTouch();
         piano.resamplePianoKeys();
     }
 
@@ -570,30 +617,16 @@ private:
     Switch algorithmSwitch;
     Audio audio;
     Piano piano;
-    Editor * editorArray[6];
-    int editorArrayIndex;
-    int numberOfScreens;
-    
-    void decEditorArrayIndex() {
-        editorArrayIndex--;
-        if (editorArrayIndex < 0) editorArrayIndex = numberOfScreens - 1;
-        editorArray[editorArrayIndex]->draw();
-    }
-
-    void incEditorArrayIndex() {
-        editorArrayIndex++;
-        if (editorArrayIndex >= numberOfScreens) editorArrayIndex = 0;
-        editorArray[editorArrayIndex]->draw();
-    }
+    LinkedRing<Editor *> editorRing;
 
     void handleInputs() {
         scanKeys();
 		int keysD = keysDown();
         if (keysD & KEY_L)
-            decEditorArrayIndex();
-        else if (keysD & KEY_R)
-            incEditorArrayIndex();
-		if (keysD & KEY_UP)
+            editorRing.prev()->draw();
+        if (keysD & KEY_R)
+            editorRing.next()->draw();
+        if (keysD & KEY_UP)
 			piano.incOctave();
 		if (keysD & KEY_DOWN)
 			piano.decOctave();
