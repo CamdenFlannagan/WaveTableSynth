@@ -2,6 +2,7 @@
 #include <maxmod9.h>
 #include <malloc.h>
 #include <stdio.h>
+#include <math.h>
 #include "nds/ndstypes.h"
 
 #define SCREEN_WIDTH 256
@@ -73,10 +74,7 @@ public:
     /**
      * display the information about the current editor
      */
-    void printInfo() {
-        consoleClear();
-        printf("%s", description);
-    }
+    void printInfo() { printf("%s", description); }
 
     /**
      * clear the editor
@@ -220,29 +218,51 @@ public:
                 bitfieldShift = i + ((i >= 11) ? 2 : 0); // because of the gap in the PianoKeys bitfield, skip 11 and 12
                 // if the key was just pressed, start the sound
                 if (down.VAL & 1<<bitfieldShift) {
-                    sounds[i].playing = true;
-                    sounds[i].freq = pitches[pitch + (12 * octave) + i];
+                    playKey(i);
                 }
                 else if (held.VAL & 1<<bitfieldShift) {
                     // I'll keep this here in case I ever need it
                 }
                 // if the key was just released kill the sound.
                 else if (up.VAL & 1<<bitfieldShift) {
-                    sounds[i].framesElapsed = 0;
-                    sounds[i].phaseFramesElapsed = 0;
-                    sounds[i].morphTableIndex = 0;
-                    sounds[i].playing = false;
-                    sounds[i].stopping = true;
-                    sounds[i].pingPongDirection = true;
+                    stopKey(i);
                 }
             }
         }
     }
 
+    /**
+     * @param i the key to be played. must be [0, 13)
+     * 
+     * This is public rather than private just in case I use this code to make a traker or sequencer
+     * Also public so that the test note can be played for users without the piano addon
+     */
+    void playKey(int i) {
+        sounds[i].playing = true;
+        sounds[i].freq = pitches[pitch + (12 * octave) + i];
+    }
+
+    /**
+     * @param i the key to be stopped. must be [0, 13)
+     * 
+     * This is public rather than private just in case I use this code to make a traker or sequencer
+     * Also public so that the test note can be played for users without the piano addon
+     */
+    void stopKey(int i) {
+        sounds[i].framesElapsed = 0;
+        sounds[i].phaseFramesElapsed = 0;
+        sounds[i].morphTableIndex = 0;
+        sounds[i].playing = false;
+        sounds[i].stopping = true;
+        sounds[i].pingPongDirection = true;
+    }
+
     void printRoot() {
         pc->cursorX = 0;
         pc->cursorY = 8;
-        printf("Root: %s", noteNames[pitch % 12]);
+        int noteNameIndex = pitch;
+        // code snippet taken from https://shadyf.com/blog/notes/2016-07-16-modulo-for-negative-numbers/
+        printf("Root: %s", noteNames[((noteNameIndex %= 12) < 0) ? noteNameIndex+12 : noteNameIndex]);
     }
 
     void incPitch() {
@@ -595,13 +615,13 @@ public:
         waveTableTwo("Wavetable Two", wave2Array),
         morphShapeTable("Transition Shape", transition),
         morphTimeSlider("Transition Time", transitionTime, SAMPLING_RATE * 10),
-        transitionCycleSwitch("Transition Cycle Mode\n1. Forward\n2. Loop\n3. Ping Pong", transitionCycle, 3),
-        algorithmSwitch("Transition Algorithm\n1. Morph\n2. Swipe\n3. Combos", algorithm, 3),
+        algorithmSwitch("Transition Algorithm\n 1. Morph\n 2. Swipe\n 3. Combos", algorithm, 3),
+        transitionCycleSwitch("Transition Cycle Mode\n 1. Forward\n 2. Loop\n 3. Ping Pong", transitionCycle, 3),
         audio(54),
         editorRing()
     {
-        editorRing.add(&algorithmSwitch);
         editorRing.add(&transitionCycleSwitch);
+        editorRing.add(&algorithmSwitch);
         editorRing.add(&morphTimeSlider);
         editorRing.add(&morphShapeTable);
         editorRing.add(&waveTableTwo);
@@ -611,6 +631,13 @@ public:
     void displayTitle() {
         printf("Wavetable Synthesizer\n for the Nintendo DS\n\n");
         printf("Press START to continue");
+    }
+
+    void redrawOnEditorSwitch() {
+        consoleClear();
+        printf("Wavetable Synthesizer for\n the Nintendo DS\n\n");
+        editorRing.curr()->draw();
+        piano.printRoot();
     }
 
     void initScreen() {
@@ -628,8 +655,7 @@ public:
                     VRAM_A[256 * j + i] = RGB15(0, 0, 0);
             }
         }
-        editorRing.curr()->draw();
-        piano.printRoot();
+        redrawOnEditorSwitch();
     }
 
     /**
@@ -655,22 +681,23 @@ private:
     TableEditor waveTableTwo;
     TableEditor morphShapeTable;
     Slider morphTimeSlider;
-    Switch transitionCycleSwitch;
     Switch algorithmSwitch;
+    Switch transitionCycleSwitch;
     Audio audio;
     Piano piano;
     LinkedRing<Editor *> editorRing;
+
 
     void handleInputs() {
         scanKeys();
 		int keysD = keysDown();
         if (keysD & KEY_L) {
-            editorRing.prev()->draw();
-            piano.printRoot();
+            editorRing.prev();
+            redrawOnEditorSwitch();
         }
         if (keysD & KEY_R) {
-            editorRing.next()->draw();
-            piano.printRoot();
+            editorRing.next();
+            redrawOnEditorSwitch();
         }
         if (keysD & KEY_UP)
 			piano.incOctave();
@@ -681,18 +708,11 @@ private:
 		if (keysD & KEY_LEFT)
 			piano.decPitch();
         int keysH = keysHeld();
-        if (keysH & KEY_X) {
-            sounds[0].playing = true;
-            sounds[0].freq = 220;
-        }
+        if (keysH & KEY_X)
+            piano.playKey(0);
         int keysU = keysUp();
-        if (keysU & KEY_X) {
-            sounds[0].framesElapsed = 0;
-            sounds[0].phaseFramesElapsed = 0;
-            sounds[0].morphTableIndex = 0;
-            sounds[0].playing = false;
-            sounds[0].stopping = true;
-        }
+        if (keysU & KEY_X)
+            piano.stopKey(0);
 		/*if (keysD & KEY_X) {
 			mmStreamClose();
 			mmStreamOpen( &mystream );
