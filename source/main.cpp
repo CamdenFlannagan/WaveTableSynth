@@ -191,14 +191,17 @@ public:
     noteNames {
         "A    ", "A#/Bb", "B    ", "C    ", "C#/Db", "D    ", "D#/Eb", "E    ", "F    ", "F#/Gb", "G    ", "G#/Ab"
     }, pitches {
+        14, 15, 15, 16, 17, 18, 19, 21, 22, 23, 24, 26, 
         28, 29, 31, 33, 35, 37, 39, 41, 44, 46, 49, 52, 
         55, 58, 62, 65, 69, 73, 78, 82, 87, 92, 98, 104, 
         110, 117, 123, 131, 139, 147, 156, 165, 175, 185, 196, 208, 
         220, 233, 247, 262, 277, 294, 311, 330, 349, 370, 392, 415, 
         440, 466, 494, 523, 554, 587, 622, 659, 698, 740, 784, 831, 
         880, 932, 988, 1047, 1109, 1175, 1245, 1319, 1397, 1480, 1568, 1661, 
-        1760, 1865, 1976, 2093, 2217, 2349, 2489, 2637, 2794, 2960, 3136, 3322
-    }, pitch{3}, octave{3} {}
+        1760, 1865, 1976, 2093, 2217, 2349, 2489, 2637, 2794, 2960, 3136, 3322, 
+        3520, 3729, 3951, 4186, 4435, 4699, 4978, 5274, 5588, 5920, 6272, 6645, 
+        7040, 7459, 7902, 8372, 8870, 9397, 9956, 10548, 11175, 11840, 12544, 13290
+    }, pitch{3}, octave{4} {}
     
 
     void resamplePianoKeys() {
@@ -236,12 +239,12 @@ public:
         }
     }
 
-    void playTestTone() { playKey(0); }
-    void stopTestTone() { stopKey(0); }
+    void playTestTone() { playKey(0); playKey(3); playKey(7); playKey(10); }
+    void stopTestTone() { stopKey(0); stopKey(3); stopKey(7); stopKey(10);}
 
     void printRoot() {
         pc->cursorX = 0;
-        pc->cursorY = 8;
+        pc->cursorY = 10;
         int noteNameIndex = pitch;
         // code snippet taken from https://shadyf.com/blog/notes/2016-07-16-modulo-for-negative-numbers/
         printf("Root: %s", noteNames[((noteNameIndex %= 12) < 0) ? noteNameIndex+12 : noteNameIndex]);
@@ -266,7 +269,7 @@ public:
 
 private:
     const char *noteNames[12];
-    int pitches[84];
+    int pitches[12 * 10];
     int pitch;
     int octave;
 
@@ -274,12 +277,15 @@ private:
      * @param i the key to be played. must be [0, 13)
      */
     void playKey(int i) {
-        sounds[i].playing = true;
-        sounds[i].freq = pitches[pitch + (12 * octave) + i];
-        sounds[i].transitionFramesElapsed = 0;
-        sounds[i].phaseFramesElapsed = 0;
-        sounds[i].morphTableIndex = 0;
-        sounds[i].pingPongDirection = true;
+        int pitchIndex = pitch + (12 * octave) + i;
+        if (pitchIndex >= 0 && pitchIndex < 120) { // only play if pitch is within the table
+            sounds[i].playing = true;
+            sounds[i].freq = pitches[pitch + (12 * octave) + i];
+            sounds[i].transitionFramesElapsed = 0;
+            sounds[i].phaseFramesElapsed = 0;
+            sounds[i].morphTableIndex = 0;
+            sounds[i].pingPongDirection = true;
+        }
     }
 
     void holdKey(int i) {
@@ -491,13 +497,42 @@ private:
     }
 };
 
+/**
+ * Uses Xorshift algorithm copied from https://en.wikipedia.org/wiki/Xorshift.
+ */
 class Random {
 public:
+    Random() {
+        state.a = 347810;
+    }
     /**
      * returns true a out of b times
      */
-    static bool prob(int a, int b) {
-        return rand() % b <= a;
+    bool prob(uint32_t a, uint32_t b) {
+        if (a == 0) {
+            return false;
+        } else if (a == b) {
+            return true;
+        } else {
+            return xorshift32(&state) % b <= a;
+        }
+    }
+private:
+    struct xorshift32_state {
+        uint32_t a;
+    };
+
+    struct xorshift32_state state;
+
+    /* The state must be initialized to non-zero */
+    uint32_t xorshift32(struct xorshift32_state *state)
+    {
+        /* Algorithm "xor" from p. 4 of Marsaglia, "Xorshift RNGs" */
+        uint32_t x = state->a;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        return state->a = x;
     }
 };
 
@@ -505,17 +540,31 @@ public:
 mm_ds_system sys;
 mm_stream mystream;
 
-class Audio {
+class Synth {
 public:
-    Audio(int gain_) : gain{gain_} {}
+    Synth(int gain_, int sampling_rate_) : gain{gain_}, sampling_rate{sampling_rate_} {}
     virtual s16 frameOutput() = 0;
+    void mmChangeSettings() {
+        mmStreamClose();
+        mystream.sampling_rate = sampling_rate;
+        mmStreamOpen( &mystream );
+    }
 protected:
     int gain;
+    int sampling_rate;
 };
 
-class PluckedString : public Audio {
+class FM : public Synth {
 public:
-    PluckedString(int gain_) : Audio(gain_) {}
+    FM(int gain_, int sampling_rate_) : Synth(gain_, sampling_rate_) {}
+    s16 frameOutput() {
+        return 0;
+    }
+};
+
+class PluckedString : public Synth {
+public:
+    PluckedString(int gain_, int sampling_rate_) : Synth(gain_, sampling_rate_) {}
     s16 frameOutput() {
         s16 output = 0;
         for (int i = 0; i < 13; i++) {
@@ -528,8 +577,10 @@ private:
         int length;
         int phase;
         int previous;
-        int table[1000];
+        int table[3000];
     };
+
+    Random randy;
 
     struct pluckInfo plucks[13];
     
@@ -538,16 +589,16 @@ private:
             struct pluckInfo *pluck = &plucks[sound->id];
             if (sound->justPressed) {
                 // 1. calculate length
-                pluck->length = SAMPLING_RATE / sound->freq;
+                pluck->length = sampling_rate / sound->freq;
                 // 2. fill the burst table
                 switch (burstType) {
-                    case 0: {
+                    case 0: { // fill the burst table with random
                         for (int i = 0; i < pluck->length; i++) {
                             pluck->table[i] = rand() % TABLE_MAX;
                         }
                         break;
                     }
-                    case 1: {
+                    case 1: { // fill the burst table with a squeezed rendition of the burstArray (filled by a table editor)
                         for (int i = 0; i < pluck->length; i++) {
                             pluck->table[i] = burstArray[Lerp::lerp(0, TABLE_LENGTH - 1, i, pluck->length - 1)];
                         }
@@ -562,7 +613,7 @@ private:
             }
             int phase = pluck->phase++ % pluck->length;
             int current = pluck->table[phase];
-            pluck->table[phase] = (Random::prob(blendFactor, TABLE_LENGTH - 1) ? 1 : -1) * ((current + pluck->previous) >> 1);
+            pluck->table[phase] = (randy.prob(blendFactor, TABLE_LENGTH - 1) ? 1 : -1) * ((current + pluck->previous) >> 1);
             pluck->previous = current;
             return gain * pluck->table[phase];
         } else {
@@ -571,9 +622,9 @@ private:
     }
 };
 
-class Wavetable : public Audio {
+class Wavetable : public Synth {
 public:
-    Wavetable(int gain_) : Audio(gain_) {}
+    Wavetable(int gain_, int sampling_rate_) : Synth(gain_, sampling_rate_) {}
 
     s16 frameOutput() {
         s16 output = 0;
@@ -599,7 +650,7 @@ private:
     }
 
     int getWavePhase(struct SoundInfo * sound) {
-	    int phase = div32((sound->phaseFramesElapsed * sound->freq * TABLE_LENGTH), SAMPLING_RATE);
+	    int phase = div32((sound->phaseFramesElapsed * sound->freq * TABLE_LENGTH), sampling_rate);
         if (phase > 8 * TABLE_LENGTH) {
             sound->phaseFramesElapsed = 0;
         }
@@ -697,7 +748,8 @@ private:
 
 class App {
 public:
-    App() : 
+    App() :
+        synEdPairRing(), 
         wavetableEditorRing(),
         waveTableOne("Wavetable One", wave1Array),
         waveTableTwo("Wavetable Two", wave2Array),
@@ -709,10 +761,8 @@ public:
         drumSlider("Blend Factor\n Left:   ???\n Middle: Drum\n Right:  Plucked String", blendFactor, TABLE_LENGTH),
         burstTypeSwitch("Burst Type\n 1. Random\n 2. Wavetable", burstType, 2),
         burstTable("Burst Wavetable", burstArray),
-        editorRingRing(),
-        synthRing(),
-        wable(54),
-        pling(27)
+        wable(54, 10000),
+        pling(27, 20000)
     {
         wavetableEditorRing.add(&transitionCycleSwitch);
         wavetableEditorRing.add(&algorithmSwitch);
@@ -725,19 +775,9 @@ public:
         pluckedEditorRing.add(&burstTypeSwitch);
         pluckedEditorRing.add(&drumSlider);
 
-        editorRingRing.add(&pluckedEditorRing);
-        editorRingRing.add(&wavetableEditorRing);
-
-        synthRing.add(&pling);
-        synthRing.add(&wable);
+        synEdPairRing.add(new SynEdPair("PLUCKED STRING\n\n", &pluckedEditorRing, &pling));
+        synEdPairRing.add(new SynEdPair("WAVETABLE SYNTH\n\n", &wavetableEditorRing, &wable));
         
-    }
-
-    void redrawOnEditorSwitch() {
-        consoleClear();
-        printf("Wavetable Synthesizer for\n the Nintendo DS\n\n");
-        editorRingRing.curr()->curr()->draw();
-        piano.printRoot();
     }
 
     void initScreen() {
@@ -755,15 +795,15 @@ public:
                     VRAM_A[256 * j + i] = RGB15(0, 0, 0);
             }
         }
-        redrawOnEditorSwitch();
+        synEdPairRing.curr()->onEditorSwitch();
     }
 
     /**
      * Executes one main loop of the program
      */
     void ExecuteOneMainLoop() {
-        handleInputs();
-        editorRingRing.curr()->curr()->handleTouch();
+        handleButtons();
+        synEdPairRing.curr()->getEditorRing()->curr()->handleTouch();
         piano.resamplePianoKeys();
     }
 
@@ -773,11 +813,46 @@ public:
      * it returns the sample to output
      */
     s16 ExecuteOneStreamLoop() {
-        return synthRing.curr()->frameOutput();
+        return synEdPairRing.curr()->getSynth()->frameOutput();
     }
 
 private:
-    
+    Piano piano;
+
+    class SynEdPair {
+    public:
+        SynEdPair(const char *description_, LinkedRing<Editor *> *editorRing_, Synth *synth_) :
+            description{description_},
+            editorRing{editorRing_},
+            synth{synth_} {}
+        
+        void onSynthSwitch() {
+            synth->mmChangeSettings();
+        }
+
+        void onEditorSwitch() {
+            consoleClear();
+            printf("Wavetable Synthesizer for\n the Nintendo DS\n\n");
+            printf("%s", description);
+            editorRing->curr()->draw();
+        }
+
+        void onPairSwitch() {
+            onSynthSwitch();
+            onEditorSwitch();
+        }
+
+        LinkedRing<Editor *> *getEditorRing() { return editorRing; }
+        Synth *getSynth() { return synth; }
+
+    private:
+        const char *description;
+        LinkedRing<Editor *> *editorRing;
+        Synth *synth;
+    };
+
+    LinkedRing<SynEdPair *> synEdPairRing;
+
     LinkedRing<Editor *> wavetableEditorRing;
     Table waveTableOne;
     Table waveTableTwo;
@@ -790,30 +865,26 @@ private:
     Slider drumSlider;
     Switch burstTypeSwitch;
     Table burstTable;
-
-    LinkedRing<LinkedRing<Editor *> *> editorRingRing;
     
-    LinkedRing<Audio *> synthRing;
     Wavetable wable;
     PluckedString pling;
-    
-    Piano piano;
 
-    void handleInputs() {
+    void handleButtons() {
         scanKeys();
 		int keysD = keysDown();
         if (keysD & KEY_L) {
-            editorRingRing.curr()->prev();
-            redrawOnEditorSwitch();
+            synEdPairRing.curr()->getEditorRing()->prev();
+            synEdPairRing.curr()->onEditorSwitch();
+            piano.printRoot();
         }
         if (keysD & KEY_R) {
-            editorRingRing.curr()->next();
-            redrawOnEditorSwitch();
+            synEdPairRing.curr()->getEditorRing()->next();
+            synEdPairRing.curr()->onEditorSwitch();
+            piano.printRoot();
         }
         if (keysD & KEY_SELECT) {
-            editorRingRing.next();
-            synthRing.next();
-            redrawOnEditorSwitch();
+            synEdPairRing.next()->onPairSwitch();
+            piano.printRoot();
         }
         if (keysD & KEY_UP)
 			piano.incOctave();
