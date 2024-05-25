@@ -19,9 +19,9 @@
 /**
  * What screens do we need?
  * 
- * 1. Wavetable No. 1 Editor <-- TableEditor
- * 2. Wavetable No. 2 Editor <-- TableEditor
- * 3. Transition Shape Editor <-- TableEditor
+ * 1. Wavetable No. 1 Editor <-- Table
+ * 2. Wavetable No. 2 Editor <-- Table
+ * 3. Transition Shape Editor <-- Table
  * 4. Transition Time Slider <-- Slider
  * 5. Swipe/Lerp Toggle <-- Toggle
  */
@@ -40,26 +40,24 @@ struct SoundInfo {
     int lastSampleOutputted; // used for depopping
 };
 
+struct SoundInfo sounds[13];
+
+/**
+ * Variables for Wavetable
+ */
 s16 wave1Array[TABLE_LENGTH];
 s16 wave2Array[TABLE_LENGTH];
 s16 transition[TABLE_LENGTH];
 int transitionTime = 0;
-struct SoundInfo sounds[13];
+int algorithm = 0; // 0. morph 1. swipe 2. combo
+int transitionCycle = 0; // 0. forward 1. loop 2. ping pong
 
 /**
- * 0 if using Morph algorithm, 1 if using Swipe algorithm, 2 if using Combination of both algorithms
+ * variables for Plucked String
  */
-int algorithm = 0;
-
-/**
- * 0 for no transition cycle, 1 for looping through transition table, 2 for ping-pong
- */
-int transitionCycle = 0;
-
-/**
- * 0 for non-percussion, 1 for percussion
- */
-int isRandom = 0;
+int blendFactor = 0; 
+int burstType = 0; // 0. random 1. wavetable
+s16 burstArray[TABLE_LENGTH];
 
 PrintConsole *pc;
 
@@ -298,9 +296,9 @@ private:
     }
 };
 
-class TableEditor : public Editor {
+class Table : public Editor {
 public:
-    TableEditor(const char * description, s16 (&table_)[TABLE_LENGTH]) : Editor(description), table(table_) {
+    Table(const char * description, s16 (&table_)[TABLE_LENGTH]) : Editor(description), table(table_) {
         for (int i = 0; i < TABLE_LENGTH; i++)
             table[i] = 0;
         hasLifted = true;
@@ -495,18 +493,17 @@ private:
 
 class Random {
 public:
-    Random() : counter{16000} {}
     /**
-     * Returns a random integer between low and high
+     * returns true a out of b times
      */
-    int rand(int low, int high) {
-        if (counter < 16000) counter = 16000;
-        return pow(counter++, 4);// + low % high;
+    static bool prob(int a, int b) {
+        return rand() % b <= a;
     }
-private:
-    int counter;
-    int pow(int n,int m){for(;m>0;m--)n*=n;return n;};
 };
+
+
+mm_ds_system sys;
+mm_stream mystream;
 
 class Audio {
 public:
@@ -524,8 +521,7 @@ public:
         for (int i = 0; i < 13; i++) {
             output += getOutputSample(&(sounds[i]));
         }
-        //printf("%d ", output);
-        return output - 32761; // add minimum negative plus a few (I don't want to think about edge cases anymore)
+        return output; // add minimum negative plus a few (I don't want to think about edge cases anymore)
     }
 private:
     struct pluckInfo {
@@ -543,9 +539,20 @@ private:
             if (sound->justPressed) {
                 // 1. calculate length
                 pluck->length = SAMPLING_RATE / sound->freq;
-                // 2. fill table with random from [0, length)
-                for (int i = 0; i < pluck->length; i++) {
-                    pluck->table[i] = rand() % TABLE_MAX;
+                // 2. fill the burst table
+                switch (burstType) {
+                    case 0: {
+                        for (int i = 0; i < pluck->length; i++) {
+                            pluck->table[i] = rand() % TABLE_MAX;
+                        }
+                        break;
+                    }
+                    case 1: {
+                        for (int i = 0; i < pluck->length; i++) {
+                            pluck->table[i] = burstArray[Lerp::lerp(0, TABLE_LENGTH - 1, i, pluck->length - 1)];
+                        }
+                        break;
+                    }
                 }
                 pluck->phase = 0;
                 // 3. initialize previous
@@ -555,7 +562,7 @@ private:
             }
             int phase = pluck->phase++ % pluck->length;
             int current = pluck->table[phase];
-            pluck->table[phase] = (current + pluck->previous) >> 1;
+            pluck->table[phase] = (Random::prob(blendFactor, TABLE_LENGTH - 1) ? 1 : -1) * ((current + pluck->previous) >> 1);
             pluck->previous = current;
             return gain * pluck->table[phase];
         } else {
@@ -576,7 +583,6 @@ public:
         return output - 32761; // add minimum negative plus a few (I don't want to think about edge cases anymore)
     }
 private:
-    Random randy;
 
     /**
      * @param v0 the first value for the lerp
@@ -692,25 +698,35 @@ private:
 class App {
 public:
     App() : 
+        wavetableEditorRing(),
         waveTableOne("Wavetable One", wave1Array),
         waveTableTwo("Wavetable Two", wave2Array),
         morphShapeTable("Transition Shape", transition),
-        morphTimeSlider("Transition Time", transitionTime, SAMPLING_RATE * 10),
+        morphTimeSlider("Transition Time\n Left:  0 seconds\n Right: 10 seconds", transitionTime, SAMPLING_RATE * 10),
         algorithmSwitch("Transition Algorithm\n 1. Morph\n 2. Swipe\n 3. Combos", algorithm, 3),
         transitionCycleSwitch("Transition Cycle Mode\n 1. Forward\n 2. Loop\n 3. Ping Pong", transitionCycle, 3),
-        percussionSwitch("Percussion\n 1. Non-Percussion\n 2. Percussion", isRandom, 2),
+        pluckedEditorRing(),
+        drumSlider("Blend Factor\n Left:   ???\n Middle: Drum\n Right:  Plucked String", blendFactor, TABLE_LENGTH),
+        burstTypeSwitch("Burst Type\n 1. Random\n 2. Wavetable", burstType, 2),
+        burstTable("Burst Wavetable", burstArray),
+        editorRingRing(),
+        synthRing(),
         wable(54),
-        pling(54),
-        editorRing(),
-        synthRing()
+        pling(27)
     {
-        editorRing.add(&percussionSwitch);
-        editorRing.add(&transitionCycleSwitch);
-        editorRing.add(&algorithmSwitch);
-        editorRing.add(&morphTimeSlider);
-        editorRing.add(&morphShapeTable);
-        editorRing.add(&waveTableTwo);
-        editorRing.add(&waveTableOne);
+        wavetableEditorRing.add(&transitionCycleSwitch);
+        wavetableEditorRing.add(&algorithmSwitch);
+        wavetableEditorRing.add(&morphTimeSlider);
+        wavetableEditorRing.add(&morphShapeTable);
+        wavetableEditorRing.add(&waveTableTwo);
+        wavetableEditorRing.add(&waveTableOne);
+
+        pluckedEditorRing.add(&burstTable);
+        pluckedEditorRing.add(&burstTypeSwitch);
+        pluckedEditorRing.add(&drumSlider);
+
+        editorRingRing.add(&pluckedEditorRing);
+        editorRingRing.add(&wavetableEditorRing);
 
         synthRing.add(&pling);
         synthRing.add(&wable);
@@ -720,7 +736,7 @@ public:
     void redrawOnEditorSwitch() {
         consoleClear();
         printf("Wavetable Synthesizer for\n the Nintendo DS\n\n");
-        editorRing.curr()->draw();
+        editorRingRing.curr()->curr()->draw();
         piano.printRoot();
     }
 
@@ -747,7 +763,7 @@ public:
      */
     void ExecuteOneMainLoop() {
         handleInputs();
-        editorRing.curr()->handleTouch();
+        editorRingRing.curr()->curr()->handleTouch();
         piano.resamplePianoKeys();
     }
 
@@ -761,33 +777,44 @@ public:
     }
 
 private:
-    TableEditor waveTableOne;
-    TableEditor waveTableTwo;
-    TableEditor morphShapeTable;
+    
+    LinkedRing<Editor *> wavetableEditorRing;
+    Table waveTableOne;
+    Table waveTableTwo;
+    Table morphShapeTable;
     Slider morphTimeSlider;
     Switch algorithmSwitch;
     Switch transitionCycleSwitch;
-    Switch percussionSwitch;
+
+    LinkedRing<Editor *> pluckedEditorRing;
+    Slider drumSlider;
+    Switch burstTypeSwitch;
+    Table burstTable;
+
+    LinkedRing<LinkedRing<Editor *> *> editorRingRing;
+    
+    LinkedRing<Audio *> synthRing;
     Wavetable wable;
     PluckedString pling;
+    
     Piano piano;
-    LinkedRing<Editor *> editorRing;
-    LinkedRing<Audio *> synthRing;
-
 
     void handleInputs() {
         scanKeys();
 		int keysD = keysDown();
         if (keysD & KEY_L) {
-            editorRing.prev();
+            editorRingRing.curr()->prev();
             redrawOnEditorSwitch();
         }
         if (keysD & KEY_R) {
-            editorRing.next();
+            editorRingRing.curr()->next();
             redrawOnEditorSwitch();
         }
-        if (keysD & KEY_SELECT)
+        if (keysD & KEY_SELECT) {
+            editorRingRing.next();
             synthRing.next();
+            redrawOnEditorSwitch();
+        }
         if (keysD & KEY_UP)
 			piano.incOctave();
 		if (keysD & KEY_DOWN)
@@ -854,21 +881,20 @@ int main( void ) {
         sounds[i].id = i;
         sounds[i].justPressed = true;
     }
-
-	//----------------------------------------------------------------
-	// initialize maxmod without any soundbank (unusual setup)
-	//----------------------------------------------------------------
-	mm_ds_system sys;
-	sys.mod_count 			= 0;
-	sys.samp_count			= 0;
-	sys.mem_bank			= 0;
-	sys.fifo_channel		= FIFO_MAXMOD;
+    
+    //----------------------------------------------------------------
+    // initialize maxmod without any soundbank (unusual setup)
+    //----------------------------------------------------------------
+    sys.mod_count 			= 0;
+    sys.samp_count			= 0;
+    sys.mem_bank			= 0;
+    sys.fifo_channel		= FIFO_MAXMOD;
 	mmInit( &sys );
 	
 	//----------------------------------------------------------------
 	// open stream
 	//----------------------------------------------------------------
-	mm_stream mystream;
+	
 	mystream.sampling_rate	= SAMPLING_RATE;			// sampling rate = 25khz
 	mystream.buffer_length	= BUFFER_SIZE;						// buffer length = 1200 samples
 	mystream.callback		= on_stream_request;		// set callback function
@@ -876,21 +902,7 @@ int main( void ) {
 	mystream.timer			= MM_TIMER0;				// use hardware timer 0
 	mystream.manual			= true;						// use manual filling
 	mmStreamOpen( &mystream );
-	
 
-
-	//----------------------------------------------------------------
-	// when using 'automatic' filling, your callback will be triggered
-	// every time half of the wave buffer is processed.
-	//
-	// so: 
-	// 25000 (rate)
-	// ----- = ~21 Hz for a full pass, and ~42hz for half pass
-	// 1200  (length)
-	//----------------------------------------------------------------
-	// with 'manual' filling, you must call mmStreamUpdate
-	// periodically (and often enough to avoid buffer underruns)
-	//----------------------------------------------------------------
 
 	while( 1 )
 	{
