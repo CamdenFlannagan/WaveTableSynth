@@ -2,7 +2,7 @@
 #include <maxmod9.h>
 #include <malloc.h>
 #include <stdio.h>
-#include <math.h>
+#include <stdlib.h>
 #include "nds/ndstypes.h"
 
 #define SCREEN_WIDTH 256
@@ -27,10 +27,12 @@
  */
 
 struct SoundInfo {
+    int id; // which key does this sound info go to?
 	bool playing; // is the note currently playing?
+    bool justPressed; // was the note just initially pressed (different from held)
     bool stopping; // used for depopping
     bool pingPongDirection; // true for forward, false for backwards
-	int framesElapsed; // frames elapsed since start of tone
+	int transitionFramesElapsed; // frames elapsed since start of tone
     int phaseFramesElapsed; // frames elapsed used for calculating phase. will be modded and deviate from actual frames elapsed
     int morphTableIndex; // the current position in the morph table
     int freq; // the frequency of the sound to be played
@@ -41,18 +43,23 @@ struct SoundInfo {
 s16 wave1Array[TABLE_LENGTH];
 s16 wave2Array[TABLE_LENGTH];
 s16 transition[TABLE_LENGTH];
-int transitionTime;
+int transitionTime = 0;
 struct SoundInfo sounds[13];
 
 /**
  * 0 if using Morph algorithm, 1 if using Swipe algorithm, 2 if using Combination of both algorithms
  */
-int algorithm;
+int algorithm = 0;
 
 /**
  * 0 for no transition cycle, 1 for looping through transition table, 2 for ping-pong
  */
-int transitionCycle;
+int transitionCycle = 0;
+
+/**
+ * 0 for non-percussion, 1 for percussion
+ */
+int isRandom = 0;
 
 PrintConsole *pc;
 
@@ -231,31 +238,8 @@ public:
         }
     }
 
-    /**
-     * @param i the key to be played. must be [0, 13)
-     * 
-     * This is public rather than private just in case I use this code to make a traker or sequencer
-     * Also public so that the test note can be played for users without the piano addon
-     */
-    void playKey(int i) {
-        sounds[i].playing = true;
-        sounds[i].freq = pitches[pitch + (12 * octave) + i];
-    }
-
-    /**
-     * @param i the key to be stopped. must be [0, 13)
-     * 
-     * This is public rather than private just in case I use this code to make a traker or sequencer
-     * Also public so that the test note can be played for users without the piano addon
-     */
-    void stopKey(int i) {
-        sounds[i].framesElapsed = 0;
-        sounds[i].phaseFramesElapsed = 0;
-        sounds[i].morphTableIndex = 0;
-        sounds[i].playing = false;
-        sounds[i].stopping = true;
-        sounds[i].pingPongDirection = true;
-    }
+    void playTestTone() { playKey(0); }
+    void stopTestTone() { stopKey(0); }
 
     void printRoot() {
         pc->cursorX = 0;
@@ -287,6 +271,31 @@ private:
     int pitches[84];
     int pitch;
     int octave;
+
+    /**
+     * @param i the key to be played. must be [0, 13)
+     */
+    void playKey(int i) {
+        sounds[i].playing = true;
+        sounds[i].freq = pitches[pitch + (12 * octave) + i];
+        sounds[i].transitionFramesElapsed = 0;
+        sounds[i].phaseFramesElapsed = 0;
+        sounds[i].morphTableIndex = 0;
+        sounds[i].pingPongDirection = true;
+    }
+
+    void holdKey(int i) {
+        sounds[i].justPressed = false;
+    }
+
+    /**
+     * @param i the key to be stopped. must be [0, 13)
+     */
+    void stopKey(int i) {
+        sounds[i].playing = false;
+        sounds[i].stopping = true;
+        sounds[i].justPressed = true;
+    }
 };
 
 class TableEditor : public Editor {
@@ -484,9 +493,80 @@ private:
     }
 };
 
+class Random {
+public:
+    Random() : counter{16000} {}
+    /**
+     * Returns a random integer between low and high
+     */
+    int rand(int low, int high) {
+        if (counter < 16000) counter = 16000;
+        return pow(counter++, 4);// + low % high;
+    }
+private:
+    int counter;
+    int pow(int n,int m){for(;m>0;m--)n*=n;return n;};
+};
+
 class Audio {
 public:
-    Audio(int gain_) : gain {gain_} {}
+    Audio(int gain_) : gain{gain_} {}
+    virtual s16 frameOutput() = 0;
+protected:
+    int gain;
+};
+
+class PluckedString : public Audio {
+public:
+    PluckedString(int gain_) : Audio(gain_) {}
+    s16 frameOutput() {
+        s16 output = 0;
+        for (int i = 0; i < 13; i++) {
+            output += getOutputSample(&(sounds[i]));
+        }
+        //printf("%d ", output);
+        return output - 32761; // add minimum negative plus a few (I don't want to think about edge cases anymore)
+    }
+private:
+    struct pluckInfo {
+        int length;
+        int phase;
+        int previous;
+        int table[1000];
+    };
+
+    struct pluckInfo plucks[13];
+    
+    int getOutputSample(struct SoundInfo * sound) {
+        if (sound->playing) {
+            struct pluckInfo *pluck = &plucks[sound->id];
+            if (sound->justPressed) {
+                // 1. calculate length
+                pluck->length = SAMPLING_RATE / sound->freq;
+                // 2. fill table with random from [0, length)
+                for (int i = 0; i < pluck->length; i++) {
+                    pluck->table[i] = rand() % TABLE_MAX;
+                }
+                pluck->phase = 0;
+                // 3. initialize previous
+                pluck->previous = pluck->table[0];
+                // 4. the key is no longer just pressed
+                sound->justPressed = false;
+            }
+            int phase = pluck->phase++ % pluck->length;
+            int current = pluck->table[phase];
+            pluck->table[phase] = (current + pluck->previous) >> 1;
+            pluck->previous = current;
+            return gain * pluck->table[phase];
+        } else {
+            return 0;
+        }
+    }
+};
+
+class Wavetable : public Audio {
+public:
+    Wavetable(int gain_) : Audio(gain_) {}
 
     s16 frameOutput() {
         s16 output = 0;
@@ -496,7 +576,7 @@ public:
         return output - 32761; // add minimum negative plus a few (I don't want to think about edge cases anymore)
     }
 private:
-    int gain;
+    Random randy;
 
     /**
      * @param v0 the first value for the lerp
@@ -517,32 +597,33 @@ private:
         if (phase > 8 * TABLE_LENGTH) {
             sound->phaseFramesElapsed = 0;
         }
-	    return phase % TABLE_LENGTH;
+        return phase % TABLE_LENGTH;
     }
 
     int getTransitionIndex(struct SoundInfo * sound) {
-        return lerp(0, TABLE_LENGTH - 1, sound->framesElapsed, transitionTime);
+        return lerp(0, TABLE_LENGTH, sound->transitionFramesElapsed, transitionTime);
     }
 
     void incrementFrameCount(struct SoundInfo * sound) {
         sound->phaseFramesElapsed++;
         switch (transitionCycle) {
             case 0:
-                sound->framesElapsed++;
+                sound->transitionFramesElapsed++;
                 break;
             case 1:
-                sound->framesElapsed = (sound->framesElapsed + 1) % transitionTime;
+                sound->transitionFramesElapsed = (sound->transitionFramesElapsed + 1) % transitionTime;
                 break;
             case 2: {
                 if (sound->pingPongDirection == true) {
-                    if (sound->framesElapsed++ >= transitionTime)
+                    if (sound->transitionFramesElapsed++ >= transitionTime)
                         sound->pingPongDirection = false;
                 } else {
-                    if (sound->framesElapsed-- <= 0)
+                    if (sound->transitionFramesElapsed-- <= 0)
                         sound->pingPongDirection = true;
                 }
                 break;
             }
+            
         }
     }
 
@@ -590,7 +671,7 @@ private:
                 incrementFrameCount(sound);
             }
             
-            sound->lastSampleOutputted = output;
+            sound->lastSampleOutputted = gain * output;
 
             return gain * output;
         } else {
@@ -617,20 +698,23 @@ public:
         morphTimeSlider("Transition Time", transitionTime, SAMPLING_RATE * 10),
         algorithmSwitch("Transition Algorithm\n 1. Morph\n 2. Swipe\n 3. Combos", algorithm, 3),
         transitionCycleSwitch("Transition Cycle Mode\n 1. Forward\n 2. Loop\n 3. Ping Pong", transitionCycle, 3),
-        audio(54),
-        editorRing()
+        percussionSwitch("Percussion\n 1. Non-Percussion\n 2. Percussion", isRandom, 2),
+        wable(54),
+        pling(54),
+        editorRing(),
+        synthRing()
     {
+        editorRing.add(&percussionSwitch);
         editorRing.add(&transitionCycleSwitch);
         editorRing.add(&algorithmSwitch);
         editorRing.add(&morphTimeSlider);
         editorRing.add(&morphShapeTable);
         editorRing.add(&waveTableTwo);
         editorRing.add(&waveTableOne);
-    }
-    
-    void displayTitle() {
-        printf("Wavetable Synthesizer\n for the Nintendo DS\n\n");
-        printf("Press START to continue");
+
+        synthRing.add(&pling);
+        synthRing.add(&wable);
+        
     }
 
     void redrawOnEditorSwitch() {
@@ -670,10 +754,10 @@ public:
     /**
      * this handles each loop in the audio stream
      * 
-     * it returns the sample to be outputed
+     * it returns the sample to output
      */
     s16 ExecuteOneStreamLoop() {
-        return audio.frameOutput();
+        return synthRing.curr()->frameOutput();
     }
 
 private:
@@ -683,9 +767,12 @@ private:
     Slider morphTimeSlider;
     Switch algorithmSwitch;
     Switch transitionCycleSwitch;
-    Audio audio;
+    Switch percussionSwitch;
+    Wavetable wable;
+    PluckedString pling;
     Piano piano;
     LinkedRing<Editor *> editorRing;
+    LinkedRing<Audio *> synthRing;
 
 
     void handleInputs() {
@@ -699,6 +786,8 @@ private:
             editorRing.next();
             redrawOnEditorSwitch();
         }
+        if (keysD & KEY_SELECT)
+            synthRing.next();
         if (keysD & KEY_UP)
 			piano.incOctave();
 		if (keysD & KEY_DOWN)
@@ -709,14 +798,10 @@ private:
 			piano.decPitch();
         int keysH = keysHeld();
         if (keysH & KEY_X)
-            piano.playKey(0);
+            piano.playTestTone();
         int keysU = keysUp();
         if (keysU & KEY_X)
-            piano.stopKey(0);
-		/*if (keysD & KEY_X) {
-			mmStreamClose();
-			mmStreamOpen( &mystream );
-		}*/
+            piano.stopTestTone();
     }
 };
 
@@ -766,15 +851,8 @@ int main( void ) {
     }
     transitionTime = 0;
     for (int i = 0; i < 13; i++) {
-        sounds[i].playing = false;
-        sounds[i].stopping = false;
-        sounds[i].pingPongDirection = true;
-        sounds[i].framesElapsed = 0;
-        sounds[i].phaseFramesElapsed = 0;
-        sounds[i].morphTableIndex = 0;
-        sounds[i].freq = 0;
-        sounds[i].depopFramesElapsed = 0;
-        sounds[i].lastSampleOutputted = 0;
+        sounds[i].id = i;
+        sounds[i].justPressed = true;
     }
 
 	//----------------------------------------------------------------
