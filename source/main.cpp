@@ -658,7 +658,7 @@ private:
     }
 
     int getTransitionIndex(struct SoundInfo * sound) {
-        return lerp(0, TABLE_LENGTH, sound->transitionFramesElapsed, transitionTime);
+        return lerp(0, TABLE_LENGTH - 1, sound->transitionFramesElapsed, transitionTime);
     }
 
     void incrementFrameCount(struct SoundInfo * sound) {
@@ -699,7 +699,7 @@ private:
                     break;
                 }
                 case 1: { // Swipe algorithm
-                    int split = lerp(0, TABLE_LENGTH, transitionValue, TABLE_MAX - 1);
+                    int split = lerp(0, TABLE_LENGTH - 1, transitionValue, TABLE_MAX - 1);
                     if (phase > split)
                         output = sample1;
                     else
@@ -709,7 +709,7 @@ private:
                 case 2: { // using a combination of both algorithms
                     int morph = lerp(sample1, sample2, transitionValue, TABLE_MAX - 1);
                     int swipe;
-                    int split = lerp(0, TABLE_LENGTH, transitionValue, TABLE_MAX - 1);
+                    int split = lerp(0, TABLE_LENGTH - 1, transitionValue, TABLE_MAX - 1);
                     if (phase > split)
                         swipe = sample1;
                     else
