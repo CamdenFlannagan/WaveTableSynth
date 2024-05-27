@@ -3,6 +3,7 @@
 #include <malloc.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include "nds/ndstypes.h"
 
 #define SCREEN_WIDTH 256
@@ -239,8 +240,8 @@ public:
         }
     }
 
-    void playTestTone() { playKey(0); playKey(3); playKey(7); playKey(10); }
-    void stopTestTone() { stopKey(0); stopKey(3); stopKey(7); stopKey(10);}
+    void playTestTone() { playKey(0); }
+    void stopTestTone() { stopKey(0); }
 
     void printRoot() {
         pc->cursorX = 0;
@@ -517,6 +518,15 @@ public:
             return xorshift32(&state) % b <= a;
         }
     }
+
+    /**
+     * fills an array with random values
+     */
+    void randArray(s16 * arr, int length, int max) {
+        for (int i = 0 ; i < length; i++) {
+            arr[i] = xorshift32(&state) % max;
+        }
+    }
 private:
     struct xorshift32_state {
         uint32_t a;
@@ -552,6 +562,114 @@ public:
 protected:
     int gain;
     int sampling_rate;
+};
+
+class BubbleSort : public Synth {
+public:
+    BubbleSort(int gain_, int sampling_rate_, s16 (&table)[TABLE_LENGTH], int &slider1Val, int &switchVal) :
+    Synth(gain_, sampling_rate_),
+    _table(table),
+    _slider1Val(slider1Val),
+    _switchVal(switchVal) {}
+        
+    s16 frameOutput() {
+        s16 output = 0;
+        for (int i = 0; i < 13; i++) {
+            output += getOutputSample(&sounds[i]);
+        }
+        return output;
+    }
+private:
+    s16 (&_table)[TABLE_LENGTH];
+    int &_slider1Val; // used for probabalistic stretching
+    int &_switchVal; // fill the table with random burst or user drawn table
+    
+    Random randy;
+
+    struct bubbleInfo {
+        int previousPhase;
+        s16 table[TABLE_LENGTH];
+    };
+
+   struct bubbleInfo bubbles[13];
+
+    int getWavePhase(struct SoundInfo * sound) {
+        int phase = div32((sound->phaseFramesElapsed * sound->freq * TABLE_LENGTH), sampling_rate);
+        if (phase > 8 * TABLE_LENGTH) {
+            sound->phaseFramesElapsed = 0;
+        }
+        return phase % TABLE_LENGTH;
+    }
+
+    void incrementFrameCount(struct SoundInfo * sound) {
+        sound->phaseFramesElapsed++;
+    }
+
+    s16 getOutputSample(struct SoundInfo * sound) {
+        if (sound->playing) {
+            struct bubbleInfo *bubble = &bubbles[sound->id];
+            if (sound->justPressed) {
+                switch (_switchVal) {
+                    case 0: { // fill with table editor
+                        for (int i = 0; i < TABLE_LENGTH; i++) {
+                            bubble->table[i] = _table[i];
+                        }
+                        break;
+                    }   
+                    case 1:  { // fill random
+                        randy.randArray(bubble->table, TABLE_LENGTH, TABLE_MAX);
+                        break;
+                    }
+                }
+                sound->justPressed = false;
+                bubble->previousPhase = 0;
+            }
+
+            int phase = getWavePhase(sound);
+            s16 previous = bubble->table[bubble->previousPhase];
+            s16 current = bubble->table[phase];
+            if (bubble->previousPhase < phase && previous > current && randy.prob(_slider1Val, TABLE_LENGTH - 1)) {
+                bubble->table[bubble->previousPhase] = current;
+                bubble->table[phase] = previous;
+            }
+            bubble->previousPhase = phase;
+
+            incrementFrameCount(sound);
+            
+            return current * gain;
+        } else {
+            return 0;
+        }
+    }
+};
+
+
+class Novelty : public Synth {
+public:
+    Novelty(int gain_, int sampling_rate_, int &algorithm, s16 (&table)[TABLE_LENGTH], int &slider1Val, int &switchVal) :
+    Synth(gain_, sampling_rate_),
+    _algorithm(algorithm),
+    _table(table),
+    _slider1Val(slider1Val),
+    _switchVal(switchVal),
+    bort(gain, sampling_rate, _table, _slider1Val, _switchVal) {}
+
+    s16 frameOutput() {
+        switch (_algorithm) {
+            case 0: { // bubble sort
+                return bort.frameOutput();
+            }
+        }
+        return 0;
+    }
+private:
+    int &_algorithm;
+    s16 (&_table)[TABLE_LENGTH];
+    int &_slider1Val;
+    int &_switchVal;
+    
+    BubbleSort bort;
+
 };
 
 class FM : public Synth {
@@ -750,6 +868,7 @@ class App {
 public:
     App() :
         synEdPairRing(), 
+        
         wavetableEditorRing(),
         waveTableOne("Wavetable One", wave1Array),
         waveTableTwo("Wavetable Two", wave2Array),
@@ -757,12 +876,24 @@ public:
         morphTimeSlider("Transition Time\n Left:  0 seconds\n Right: 10 seconds", transitionTime, SAMPLING_RATE * 10),
         algorithmSwitch("Transition Algorithm\n 1. Morph\n 2. Swipe\n 3. Combos", algorithm, 3),
         transitionCycleSwitch("Transition Cycle Mode\n 1. Forward\n 2. Loop\n 3. Ping Pong", transitionCycle, 3),
+        
         pluckedEditorRing(),
         drumSlider("Blend Factor\n Left:   ???\n Middle: Drum\n Right:  Plucked String", blendFactor, TABLE_LENGTH),
         burstTypeSwitch("Burst Type\n 1. Random\n 2. Wavetable", burstType, 2),
         burstTable("Burst Wavetable", burstArray),
+        
+        noveltyEditorRing(),
+        novAlg{0},
+        noveltyAlgorithmSwitch("Novelty Algorithm\n 0. Bubble Sort", novAlg, 1),
+        noveltyTable("Table", novTab),
+        novSlid1{0},
+        noveltySlider1("Slider", novSlid1, TABLE_LENGTH - 1),
+        novSwitch{0},
+        noveltySwitch("Switch", novSwitch, 2),
+
         wable(54, 10000),
-        pling(27, 20000)
+        pling(27, 20000),
+        novel(27, 20000, novAlg, novTab, novSlid1, novSwitch)
     {
         wavetableEditorRing.add(&transitionCycleSwitch);
         wavetableEditorRing.add(&algorithmSwitch);
@@ -775,6 +906,12 @@ public:
         pluckedEditorRing.add(&burstTypeSwitch);
         pluckedEditorRing.add(&drumSlider);
 
+        noveltyEditorRing.add(&noveltySwitch);
+        noveltyEditorRing.add(&noveltySlider1);
+        noveltyEditorRing.add(&noveltyTable);
+        noveltyEditorRing.add(&noveltyAlgorithmSwitch);
+
+        synEdPairRing.add(new SynEdPair("NOVELTY\n\n", &noveltyEditorRing, &novel));
         synEdPairRing.add(new SynEdPair("PLUCKED STRING\n\n", &pluckedEditorRing, &pling));
         synEdPairRing.add(new SynEdPair("WAVETABLE SYNTH\n\n", &wavetableEditorRing, &wable));
         
@@ -865,9 +1002,20 @@ private:
     Slider drumSlider;
     Switch burstTypeSwitch;
     Table burstTable;
+
+    LinkedRing<Editor* > noveltyEditorRing;
+    int novAlg;
+    Switch noveltyAlgorithmSwitch;
+    s16 novTab[TABLE_LENGTH];
+    Table noveltyTable;
+    int novSlid1;
+    Slider noveltySlider1;
+    int novSwitch;
+    Switch noveltySwitch;
     
     Wavetable wable;
     PluckedString pling;
+    Novelty novel;
 
     void handleButtons() {
         scanKeys();
