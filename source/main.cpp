@@ -28,7 +28,7 @@
  */
 
 struct SoundInfo {
-    int id; // which key does this sound info go to?
+    int key; // which key does this sound info go to?
 	bool playing; // is the note currently playing?
     bool justPressed; // was the note just initially pressed (different from held)
     bool stopping; // used for depopping
@@ -607,19 +607,19 @@ private:
 
     s16 getOutputSample(struct SoundInfo * sound) {
         if (sound->playing) {
-            struct bubbleInfo *bubble = &bubbles[sound->id];
+            struct bubbleInfo *bubble = &bubbles[sound->key];
             if (sound->justPressed) {
                 switch (_switchVal) {
-                    case 0: { // fill with table editor
+                    case 0:  { // fill random
+                        randy.randArray(bubble->table, TABLE_LENGTH, TABLE_MAX);
+                        break;
+                    }
+                    case 1: { // fill with table editor
                         for (int i = 0; i < TABLE_LENGTH; i++) {
                             bubble->table[i] = _table[i];
                         }
                         break;
                     }   
-                    case 1:  { // fill random
-                        randy.randArray(bubble->table, TABLE_LENGTH, TABLE_MAX);
-                        break;
-                    }
                 }
                 sound->justPressed = false;
                 bubble->previousPhase = 0;
@@ -643,6 +643,82 @@ private:
     }
 };
 
+class XOR : public Synth {
+public:
+    XOR(int gain_, int sampling_rate_, s16 (&table)[TABLE_LENGTH], int &slider1Val, int &switchVal) :
+    Synth(gain_, sampling_rate_),
+    _table(table),
+    _slider1Val(slider1Val),
+    _switchVal(switchVal) {}
+
+    s16 frameOutput() {
+        s16 output = 0;
+        for (int i = 0; i < 13; i++) {
+            output += getOutputSample(&(sounds[i]));
+        }
+        return output;
+    }
+private:
+    Random randy;
+
+    s16 (&_table)[TABLE_LENGTH];
+    int &_slider1Val;
+    int &_switchVal;
+
+    struct xorInfo {
+        s16 previous;
+        s16 table[TABLE_LENGTH];
+    };
+
+    struct xorInfo infos[13];
+
+    int getWavePhase(struct SoundInfo * sound) {
+        int phase = div32((sound->phaseFramesElapsed * sound->freq * TABLE_LENGTH), sampling_rate);
+        if (phase > 8 * TABLE_LENGTH) {
+            sound->phaseFramesElapsed = 0;
+        }
+        return phase % TABLE_LENGTH;
+    }
+
+    void incrementFrameCount(struct SoundInfo * sound) {
+        sound->phaseFramesElapsed++;
+    }
+
+
+    int getOutputSample(struct SoundInfo * sound) {
+        struct xorInfo * info = &infos[sound->key];
+        if (sound->playing) {
+            if (sound->justPressed) {
+                switch (_switchVal) {
+                case 0: // fill random
+                randy.randArray(info->table, TABLE_LENGTH, TABLE_MAX);
+                    break;
+                case 1: // fill with table
+                    for (int i = 0; i < TABLE_LENGTH; i++)
+                        info->table[i] = _table[i];
+                    break;
+                }
+                info->previous = info->table[TABLE_MAX - 1];
+                sound->justPressed = false;
+            }
+        
+            int phase = getWavePhase(sound);
+            int current = info->table[phase];
+            incrementFrameCount(sound);
+
+            if (randy.prob(_slider1Val, TABLE_LENGTH)) {
+                current ^= info->previous;
+                info->table[phase] = current;
+            }
+
+            info->previous = current;
+            return gain * current;
+        } else {
+            return 0;
+        }
+    }
+};
+
 
 class Novelty : public Synth {
 public:
@@ -652,12 +728,16 @@ public:
     _table(table),
     _slider1Val(slider1Val),
     _switchVal(switchVal),
-    bort(gain, sampling_rate, _table, _slider1Val, _switchVal) {}
+    bort(gain, sampling_rate, _table, _slider1Val, _switchVal),
+    exor(gain, sampling_rate, _table, _slider1Val, _switchVal) {}
 
     s16 frameOutput() {
         switch (_algorithm) {
             case 0: { // bubble sort
                 return bort.frameOutput();
+            }
+            case 1: { // XOR
+                return exor.frameOutput();
             }
         }
         return 0;
@@ -669,6 +749,7 @@ private:
     int &_switchVal;
     
     BubbleSort bort;
+    XOR exor;
 
 };
 
@@ -704,7 +785,7 @@ private:
     
     int getOutputSample(struct SoundInfo * sound) {
         if (sound->playing) {
-            struct pluckInfo *pluck = &plucks[sound->id];
+            struct pluckInfo *pluck = &plucks[sound->key];
             if (sound->justPressed) {
                 // 1. calculate length
                 pluck->length = sampling_rate / sound->freq;
@@ -884,7 +965,7 @@ public:
         
         noveltyEditorRing(),
         novAlg{0},
-        noveltyAlgorithmSwitch("Novelty Algorithm\n 0. Bubble Sort", novAlg, 1),
+        noveltyAlgorithmSwitch("Novelty Algorithm\n 0. Bubble Sort\n 1. XOR", novAlg, 2),
         noveltyTable("Table", novTab),
         novSlid1{0},
         noveltySlider1("Slider", novSlid1, TABLE_LENGTH - 1),
@@ -1097,7 +1178,7 @@ int main( void ) {
     }
     transitionTime = 0;
     for (int i = 0; i < 13; i++) {
-        sounds[i].id = i;
+        sounds[i].key = i;
         sounds[i].justPressed = true;
     }
     
