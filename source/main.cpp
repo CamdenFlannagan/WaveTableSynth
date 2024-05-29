@@ -506,8 +506,16 @@ public:
     Random() {
         state.a = 347810;
     }
+
     /**
-     * returns true a out of b times
+     * @return true half of the time
+     */
+    bool coinFlip() {
+        return xorshift32(&state) & 1;
+    }
+
+    /**
+     * @return true a out of b times
      */
     bool prob(uint32_t a, uint32_t b) {
         if (a == 0) {
@@ -552,22 +560,101 @@ mm_stream mystream;
 
 class Synth {
 public:
-    Synth(int gain_, int sampling_rate_) : gain{gain_}, sampling_rate{sampling_rate_} {}
+    Synth(int gain, int samplingRate) : _gain{gain}, _samplingRate{samplingRate} {}
     virtual s16 frameOutput() = 0;
     void mmChangeSettings() {
         mmStreamClose();
-        mystream.sampling_rate = sampling_rate;
+        mystream.sampling_rate = _samplingRate;
         mmStreamOpen( &mystream );
     }
 protected:
-    int gain;
-    int sampling_rate;
+    int _gain;
+    int _samplingRate;
+};
+
+class VariableLengthWavetable : public Synth {
+public:
+protected:
+    struct info {
+        s16 previous;
+        int length;
+        s16 table[3000];
+    };
+    struct info infos[13];
+};
+
+class ExcitedString : public Synth {
+public:
+    ExcitedString(int gain, int samplingRate, s16 (&table)[TABLE_LENGTH], int &slider1Val, int &switchVal) :
+    Synth(gain, samplingRate),
+    _table(table),
+    _slider1Val(slider1Val),
+    _switchVal(switchVal) {}
+
+    s16 frameOutput() {
+        s16 output = 0;
+        for (int i = 0; i < 13; i++) {
+            output += getOutputSample(&sounds[i]);
+        }
+        return output;
+    }
+private:
+    Random randy;
+
+    s16 (&_table)[TABLE_LENGTH];
+    int &_slider1Val;
+    int &_switchVal;
+
+    struct ESInfo {
+        s16 previous;
+        int length;
+        s16 table[3000];
+    };
+    struct ESInfo infos[13];
+
+    s16 getOutputSample(struct SoundInfo * sound) {
+        struct ESInfo * info = &infos[sound->key];
+        if (sound->playing) {
+            info->length = _samplingRate / sound->freq;
+            if (sound->justPressed) {
+                switch (_switchVal) {
+                    case 0: { // fill the burst table with random
+                        for (int i = 0; i < info->length; i++) {
+                           info->table[i] = rand() % TABLE_MAX;
+                        }
+                        break;
+                    }
+                    case 1: { // fill the burst table with a squeezed rendition of the _table (filled by a table editor)
+                        for (int i = 0; i < info->length; i++) {
+                            info->table[i] = _table[Lerp::lerp(0, TABLE_LENGTH - 1, i, info->length - 1)];
+                        }
+                        break;
+                    }
+                }
+                info->previous = info->table[info->length];
+                sound->justPressed = false;
+            }
+            s16 output;
+            if (randy.prob(_slider1Val, TABLE_LENGTH - 1)) {
+                output = info->table[sound->phaseFramesElapsed] += randy.coinFlip() ? 16 : -16;
+            } else {
+                output = info->previous =
+                    info->table[sound->phaseFramesElapsed] =
+                    (info->table[sound->phaseFramesElapsed] + info->previous) >> 1;
+            }
+            sound->phaseFramesElapsed++;
+            sound->phaseFramesElapsed %= info->length;
+            return _gain * output;
+        } else {
+            return 0;
+        }
+    }
 };
 
 class BubbleSort : public Synth {
 public:
-    BubbleSort(int gain_, int sampling_rate_, s16 (&table)[TABLE_LENGTH], int &slider1Val, int &switchVal) :
-    Synth(gain_, sampling_rate_),
+    BubbleSort(int gain, int samplingRate, s16 (&table)[TABLE_LENGTH], int &slider1Val, int &switchVal) :
+    Synth(gain, samplingRate),
     _table(table),
     _slider1Val(slider1Val),
     _switchVal(switchVal) {}
@@ -594,7 +681,7 @@ private:
    struct bubbleInfo bubbles[13];
 
     int getWavePhase(struct SoundInfo * sound) {
-        int phase = div32((sound->phaseFramesElapsed * sound->freq * TABLE_LENGTH), sampling_rate);
+        int phase = div32((sound->phaseFramesElapsed * sound->freq * TABLE_LENGTH), _samplingRate);
         if (phase > 8 * TABLE_LENGTH) {
             sound->phaseFramesElapsed = 0;
         }
@@ -636,7 +723,7 @@ private:
 
             incrementFrameCount(sound);
             
-            return current * gain;
+            return current * _gain;
         } else {
             return 0;
         }
@@ -645,8 +732,8 @@ private:
 
 class XOR : public Synth {
 public:
-    XOR(int gain_, int sampling_rate_, s16 (&table)[TABLE_LENGTH], int &slider1Val, int &switchVal) :
-    Synth(gain_, sampling_rate_),
+    XOR(int gain, int samplingRate, s16 (&table)[TABLE_LENGTH], int &slider1Val, int &switchVal) :
+    Synth(gain, samplingRate),
     _table(table),
     _slider1Val(slider1Val),
     _switchVal(switchVal) {}
@@ -673,7 +760,7 @@ private:
     struct xorInfo infos[13];
 
     int getWavePhase(struct SoundInfo * sound) {
-        int phase = div32((sound->phaseFramesElapsed * sound->freq * TABLE_LENGTH), sampling_rate);
+        int phase = div32((sound->phaseFramesElapsed * sound->freq * TABLE_LENGTH), _samplingRate);
         if (phase > 8 * TABLE_LENGTH) {
             sound->phaseFramesElapsed = 0;
         }
@@ -712,7 +799,7 @@ private:
             }
 
             info->previous = current;
-            return gain * current;
+            return _gain * current;
         } else {
             return 0;
         }
@@ -722,22 +809,26 @@ private:
 
 class Novelty : public Synth {
 public:
-    Novelty(int gain_, int sampling_rate_, int &algorithm, s16 (&table)[TABLE_LENGTH], int &slider1Val, int &switchVal) :
-    Synth(gain_, sampling_rate_),
+    Novelty(int gain, int samplingRate, int &algorithm, s16 (&table)[TABLE_LENGTH], int &slider1Val, int &switchVal) :
+    Synth(gain, samplingRate),
     _algorithm(algorithm),
     _table(table),
     _slider1Val(slider1Val),
     _switchVal(switchVal),
-    bort(gain, sampling_rate, _table, _slider1Val, _switchVal),
-    exor(gain, sampling_rate, _table, _slider1Val, _switchVal) {}
+    bort(_gain, _samplingRate, _table, _slider1Val, _switchVal),
+    exor(_gain, _samplingRate, _table, _slider1Val, _switchVal),
+    erin(_gain, _samplingRate, _table, _slider1Val, _switchVal) {}
 
     s16 frameOutput() {
         switch (_algorithm) {
-            case 0: { // bubble sort
+            case 0: { // Bubble Sort
                 return bort.frameOutput();
             }
             case 1: { // XOR
                 return exor.frameOutput();
+            }
+            case 2: { // Excited String
+                return erin.frameOutput();
             }
         }
         return 0;
@@ -750,12 +841,13 @@ private:
     
     BubbleSort bort;
     XOR exor;
+    ExcitedString erin;
 
 };
 
 class FM : public Synth {
 public:
-    FM(int gain_, int sampling_rate_) : Synth(gain_, sampling_rate_) {}
+    FM(int gain, int samplingRate) : Synth(gain, samplingRate) {}
     s16 frameOutput() {
         return 0;
     }
@@ -763,7 +855,7 @@ public:
 
 class PluckedString : public Synth {
 public:
-    PluckedString(int gain_, int sampling_rate_) : Synth(gain_, sampling_rate_) {}
+    PluckedString(int gain, int samplingRate) : Synth(gain, samplingRate) {}
     s16 frameOutput() {
         s16 output = 0;
         for (int i = 0; i < 13; i++) {
@@ -788,7 +880,7 @@ private:
             struct pluckInfo *pluck = &plucks[sound->key];
             if (sound->justPressed) {
                 // 1. calculate length
-                pluck->length = sampling_rate / sound->freq;
+                pluck->length = _samplingRate / sound->freq;
                 // 2. fill the burst table
                 switch (burstType) {
                     case 0: { // fill the burst table with random
@@ -814,7 +906,7 @@ private:
             int current = pluck->table[phase];
             pluck->table[phase] = (randy.prob(blendFactor, TABLE_LENGTH - 1) ? 1 : -1) * ((current + pluck->previous) >> 1);
             pluck->previous = current;
-            return gain * pluck->table[phase];
+            return _gain * pluck->table[phase];
         } else {
             return 0;
         }
@@ -823,7 +915,7 @@ private:
 
 class Wavetable : public Synth {
 public:
-    Wavetable(int gain_, int sampling_rate_) : Synth(gain_, sampling_rate_) {}
+    Wavetable(int gain, int samplingRate) : Synth(gain, samplingRate) {}
 
     s16 frameOutput() {
         s16 output = 0;
@@ -849,7 +941,7 @@ private:
     }
 
     int getWavePhase(struct SoundInfo * sound) {
-	    int phase = div32((sound->phaseFramesElapsed * sound->freq * TABLE_LENGTH), sampling_rate);
+	    int phase = div32((sound->phaseFramesElapsed * sound->freq * TABLE_LENGTH), _samplingRate);
         if (phase > 8 * TABLE_LENGTH) {
             sound->phaseFramesElapsed = 0;
         }
@@ -927,9 +1019,9 @@ private:
                 incrementFrameCount(sound);
             }
             
-            sound->lastSampleOutputted = gain * output;
+            sound->lastSampleOutputted = _gain * output;
 
-            return gain * output;
+            return _gain * output;
         } else {
             int output;
             if (sound->stopping) {
@@ -965,7 +1057,7 @@ public:
         
         noveltyEditorRing(),
         novAlg{0},
-        noveltyAlgorithmSwitch("Novelty Algorithm\n 0. Bubble Sort\n 1. XOR", novAlg, 2),
+        noveltyAlgorithmSwitch("Novelty Algorithms\n 0. Bubble Sort\n 1. XOR\n 2. Excited String", novAlg, 3),
         noveltyTable("Table", novTab),
         novSlid1{0},
         noveltySlider1("Slider", novSlid1, TABLE_LENGTH - 1),
