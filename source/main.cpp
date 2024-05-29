@@ -498,6 +498,87 @@ private:
     }
 };
 
+class MultiSlider : public Editor {
+public:
+    MultiSlider(const char * description, int (&vals)[8], int numSliders, int maxVal) :
+        Editor(description),
+        _vals (vals),
+        _numSliders {numSliders},
+        _maxVal {maxVal},
+        _hasLifted {true}
+    {
+        for (int i = 0; i < _numSliders; i++) {
+            _sliders[i].rawx = SCREEN_PADDING;
+            _vals[i] = 0;
+        }
+    }
+
+    void handleTouch() {
+        int keysH = keysHeld();
+        if (keysH & KEY_TOUCH) {
+            touchRead(&touch);
+            if (_hasLifted) {
+                _currentSliderHeld = (touch.py - SCREEN_PADDING) * _numSliders / TABLE_MAX;
+               _hasLifted = false;
+            }
+
+            _sliders[_currentSliderHeld].rawx = touch.px;
+            _vals[_currentSliderHeld] = ((touch.px - SCREEN_PADDING) * _maxVal) / TABLE_MAX;
+
+            drawSlider(_currentSliderHeld);
+            
+        } else {
+            _hasLifted = true;
+        }
+    }
+
+    void draw() {
+        printInfo();
+        drawSliders();
+    }
+private:
+    int (&_vals)[8];
+    int _numSliders;
+    int _currentSliderHeld;
+    int _maxVal;
+
+    touchPosition touch;
+    bool _hasLifted;
+
+    struct slider {
+        int rawx;
+    };
+
+    struct slider _sliders[8]; // multislider has max of 8 sliders
+
+    void drawSlider(int slider) {
+
+        int x = _sliders[slider].rawx;
+        int yLow = SCREEN_PADDING + (slider*TABLE_MAX / _numSliders);
+        int yHigh = SCREEN_PADDING + ((slider + 1)*TABLE_MAX / _numSliders);
+        for (int i = SCREEN_PADDING; i <= SCREEN_WIDTH - SCREEN_PADDING; i++) {
+            for (int j = yLow; j < yHigh; j++) {
+                if (i == x)
+                    VRAM_A[256 * j + i] = RGB15(31, 31, 31);
+                else
+                    VRAM_A[256 * j + i] = RGB15(0, 0, 0);
+            }
+        }  
+    }
+
+    void drawSliders() {
+        for (int i = SCREEN_PADDING; i <= SCREEN_WIDTH - SCREEN_PADDING; i++) {
+            for (int j = SCREEN_PADDING; j <= SCREEN_HEIGHT - SCREEN_PADDING; j++) {
+                struct slider *current = &_sliders[(j - SCREEN_PADDING) * _numSliders / TABLE_MAX];
+                if (i == current->rawx)
+                    VRAM_A[256 * j + i] = RGB15(31, 31, 31);
+                else
+                    VRAM_A[256 * j + i] = RGB15(0, 0, 0);
+            }
+        }
+    }
+};
+
 /**
  * Uses Xorshift algorithm copied from https://en.wikipedia.org/wiki/Xorshift.
  */
@@ -848,17 +929,71 @@ private:
 
 class FM : public Synth {
 public:
-    FM(int gain, int samplingRate) : Synth(gain, samplingRate) {
+    FM(int gain, int samplingRate) :
+        Synth(gain, samplingRate),
+        _op1(_samplingRate),
+        _op2(_samplingRate),
+        _op3(_samplingRate),
+        _op4(_samplingRate)
+    {
         for (int i = 0; i < 13; i++) {
             infos[i].sine = new Sine(_samplingRate);
         }
+
+        _op1.setMod(&_op2);
+        _op2.setRatio(2);
     }
 private:
-    struct sinInfo {
+    class Operator {
+    public:
+        Operator(int samplingRate) :
+            sine(samplingRate),
+            _modulator {NULL},
+            _ratio {1},
+            _operation {1} {}
+         
+        s16 evaluate(int freq) {
+            if (_modulator == NULL) {
+                return sine.sin(freq);
+            } else {
+                switch (_operation) {
+                    case 0: //add
+                        return sine.sin(freq) + _modulator->evaluate(freq);
+                    case 1: // modulate
+                        return sine.sin(freq + _modulator->evaluate(freq));
+                }
+                return 0;
+            }
+        }
+
+        void setMod(Operator *op) {
+            _modulator = op;
+        }
+
+        void setRatio(int ratio) {
+            _ratio = ratio;
+        }
+
+        void setOperation(int operation) {
+            _operation = operation;
+        }
+    private:
+        Sine sine;
+        Operator * _modulator;
+        int _ratio;
+        int _operation;
+    };
+
+    Operator _op1;
+    Operator _op2;
+    Operator _op3;
+    Operator _op4;
+
+    struct fmInfo {
         Sine *sine;
     };
 
-    struct sinInfo infos[13];
+    struct fmInfo infos[13];
 
     s16 getOutputSample(struct SoundInfo * sound) {
         if (sound->playing) {
@@ -1069,7 +1204,7 @@ public:
         novel(27, 20000, novAlg, novTab, novSlid1, novSwitch),
 
         fmEditorRing(),
-        fmOperator1Table("Placeholder Table! Woohoo!", fmOp1Tab),
+        fmAmpMultiSlider("Operator Amplitudes", fmAmpVals, 4, TABLE_LENGTH),
         fam(1, 32768)
     {
         wavetableEditorRing.add(&transitionCycleSwitch);
@@ -1088,7 +1223,7 @@ public:
         noveltyEditorRing.add(&noveltyTable);
         noveltyEditorRing.add(&noveltyAlgorithmSwitch);
 
-        fmEditorRing.add(&fmOperator1Table);
+        fmEditorRing.add(&fmAmpMultiSlider);
 
         synEdPairRing.add(new SynEdPair("FM\n\n", &fmEditorRing, &fam));
         synEdPairRing.add(new SynEdPair("NOVELTY\n\n", &noveltyEditorRing, &novel));
@@ -1197,14 +1332,9 @@ private:
     Novelty novel;
 
     LinkedRing<Editor* > fmEditorRing;
-    s16 fmOp1Tab[TABLE_LENGTH];
-    Table fmOperator1Table;
+    int fmAmpVals[8];
+    MultiSlider fmAmpMultiSlider;
     FM fam;
-    
-    
-    
-    
-
 
     void handleButtons() {
         scanKeys();
