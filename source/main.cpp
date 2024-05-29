@@ -558,10 +558,33 @@ private:
 mm_ds_system sys;
 mm_stream mystream;
 
+/**
+ * sinLerp angle from -32768 to 32767. range of 65535
+ */
+class Sine {
+public:
+    Sine(int samplingRate) :
+    _samplingRate{samplingRate},
+    _t{0} {}
+
+    s16 sin(int freq) {
+        return sinLerp((_t++ * freq * 65536) / _samplingRate);
+    }
+private:
+    int _samplingRate;
+    s16 _t;
+};
+
 class Synth {
 public:
     Synth(int gain, int samplingRate) : _gain{gain}, _samplingRate{samplingRate} {}
-    virtual s16 frameOutput() = 0;
+    virtual s16 frameOutput() {
+        s16 output = 0;
+        for (int i = 0; i < 13; i++) {
+            output += getOutputSample(&sounds[i]);
+        }
+        return output;
+    }
     void mmChangeSettings() {
         mmStreamClose();
         mystream.sampling_rate = _samplingRate;
@@ -570,6 +593,7 @@ public:
 protected:
     int _gain;
     int _samplingRate;
+    virtual s16 getOutputSample(struct SoundInfo * sound) = 0;
 };
 
 class VariableLengthWavetable : public Synth {
@@ -590,14 +614,6 @@ public:
     _table(table),
     _slider1Val(slider1Val),
     _switchVal(switchVal) {}
-
-    s16 frameOutput() {
-        s16 output = 0;
-        for (int i = 0; i < 13; i++) {
-            output += getOutputSample(&sounds[i]);
-        }
-        return output;
-    }
 private:
     Random randy;
 
@@ -658,14 +674,6 @@ public:
     _table(table),
     _slider1Val(slider1Val),
     _switchVal(switchVal) {}
-        
-    s16 frameOutput() {
-        s16 output = 0;
-        for (int i = 0; i < 13; i++) {
-            output += getOutputSample(&sounds[i]);
-        }
-        return output;
-    }
 private:
     s16 (&_table)[TABLE_LENGTH];
     int &_slider1Val; // used for probabalistic stretching
@@ -737,14 +745,6 @@ public:
     _table(table),
     _slider1Val(slider1Val),
     _switchVal(switchVal) {}
-
-    s16 frameOutput() {
-        s16 output = 0;
-        for (int i = 0; i < 13; i++) {
-            output += getOutputSample(&(sounds[i]));
-        }
-        return output;
-    }
 private:
     Random randy;
 
@@ -772,7 +772,7 @@ private:
     }
 
 
-    int getOutputSample(struct SoundInfo * sound) {
+    s16 getOutputSample(struct SoundInfo * sound) {
         struct xorInfo * info = &infos[sound->key];
         if (sound->playing) {
             if (sound->justPressed) {
@@ -819,7 +819,7 @@ public:
     exor(_gain, _samplingRate, _table, _slider1Val, _switchVal),
     erin(_gain, _samplingRate, _table, _slider1Val, _switchVal) {}
 
-    s16 frameOutput() {
+    s16 frameOutput() override {
         switch (_algorithm) {
             case 0: { // Bubble Sort
                 return bort.frameOutput();
@@ -843,26 +843,35 @@ private:
     XOR exor;
     ExcitedString erin;
 
+    s16 getOutputSample(struct SoundInfo * sound) { return 0; }
 };
 
 class FM : public Synth {
 public:
-    FM(int gain, int samplingRate) : Synth(gain, samplingRate) {}
-    s16 frameOutput() {
-        return 0;
+    FM(int gain, int samplingRate) : Synth(gain, samplingRate) {
+        for (int i = 0; i < 13; i++) {
+            infos[i].sine = new Sine(_samplingRate);
+        }
+    }
+private:
+    struct sinInfo {
+        Sine *sine;
+    };
+
+    struct sinInfo infos[13];
+
+    s16 getOutputSample(struct SoundInfo * sound) {
+        if (sound->playing) {
+            return infos[sound->key].sine->sin(sound->freq);
+        } else {
+            return 0;
+        }
     }
 };
 
 class PluckedString : public Synth {
 public:
     PluckedString(int gain, int samplingRate) : Synth(gain, samplingRate) {}
-    s16 frameOutput() {
-        s16 output = 0;
-        for (int i = 0; i < 13; i++) {
-            output += getOutputSample(&(sounds[i]));
-        }
-        return output; // add minimum negative plus a few (I don't want to think about edge cases anymore)
-    }
 private:
     struct pluckInfo {
         int length;
@@ -875,7 +884,7 @@ private:
 
     struct pluckInfo plucks[13];
     
-    int getOutputSample(struct SoundInfo * sound) {
+    s16 getOutputSample(struct SoundInfo * sound) {
         if (sound->playing) {
             struct pluckInfo *pluck = &plucks[sound->key];
             if (sound->justPressed) {
@@ -916,14 +925,6 @@ private:
 class Wavetable : public Synth {
 public:
     Wavetable(int gain, int samplingRate) : Synth(gain, samplingRate) {}
-
-    s16 frameOutput() {
-        s16 output = 0;
-        for (int i = 0; i < 13; i++) {
-            output += getOutputSample(&(sounds[i]));
-        }
-        return output - 32761; // add minimum negative plus a few (I don't want to think about edge cases anymore)
-    }
 private:
 
     /**
@@ -975,7 +976,7 @@ private:
         }
     }
 
-    int getOutputSample(struct SoundInfo * sound) {
+    s16 getOutputSample(struct SoundInfo * sound) {
         if (sound->playing) {
             int phase = getWavePhase(sound);
             s16 sample1 = wave1Array[phase];
@@ -1049,12 +1050,14 @@ public:
         morphTimeSlider("Transition Time\n Left:  0 seconds\n Right: 10 seconds", transitionTime, SAMPLING_RATE * 10),
         algorithmSwitch("Transition Algorithm\n 1. Morph\n 2. Swipe\n 3. Combos", algorithm, 3),
         transitionCycleSwitch("Transition Cycle Mode\n 1. Forward\n 2. Loop\n 3. Ping Pong", transitionCycle, 3),
-        
+        wable(54, 10000),
+
         pluckedEditorRing(),
         drumSlider("Blend Factor\n Left:   ???\n Middle: Drum\n Right:  Plucked String", blendFactor, TABLE_LENGTH),
         burstTypeSwitch("Burst Type\n 1. Random\n 2. Wavetable", burstType, 2),
         burstTable("Burst Wavetable", burstArray),
-        
+        pling(27, 20000),
+
         noveltyEditorRing(),
         novAlg{0},
         noveltyAlgorithmSwitch("Novelty Algorithms\n 0. Bubble Sort\n 1. XOR\n 2. Excited String", novAlg, 3),
@@ -1063,10 +1066,11 @@ public:
         noveltySlider1("Slider", novSlid1, TABLE_LENGTH - 1),
         novSwitch{0},
         noveltySwitch("Switch", novSwitch, 2),
+        novel(27, 20000, novAlg, novTab, novSlid1, novSwitch),
 
-        wable(54, 10000),
-        pling(27, 20000),
-        novel(27, 20000, novAlg, novTab, novSlid1, novSwitch)
+        fmEditorRing(),
+        fmOperator1Table("Placeholder Table! Woohoo!", fmOp1Tab),
+        fam(1, 32768)
     {
         wavetableEditorRing.add(&transitionCycleSwitch);
         wavetableEditorRing.add(&algorithmSwitch);
@@ -1084,6 +1088,9 @@ public:
         noveltyEditorRing.add(&noveltyTable);
         noveltyEditorRing.add(&noveltyAlgorithmSwitch);
 
+        fmEditorRing.add(&fmOperator1Table);
+
+        synEdPairRing.add(new SynEdPair("FM\n\n", &fmEditorRing, &fam));
         synEdPairRing.add(new SynEdPair("NOVELTY\n\n", &noveltyEditorRing, &novel));
         synEdPairRing.add(new SynEdPair("PLUCKED STRING\n\n", &pluckedEditorRing, &pling));
         synEdPairRing.add(new SynEdPair("WAVETABLE SYNTH\n\n", &wavetableEditorRing, &wable));
@@ -1170,11 +1177,13 @@ private:
     Slider morphTimeSlider;
     Switch algorithmSwitch;
     Switch transitionCycleSwitch;
+    Wavetable wable;
 
     LinkedRing<Editor *> pluckedEditorRing;
     Slider drumSlider;
     Switch burstTypeSwitch;
     Table burstTable;
+    PluckedString pling;
 
     LinkedRing<Editor* > noveltyEditorRing;
     int novAlg;
@@ -1185,10 +1194,17 @@ private:
     Slider noveltySlider1;
     int novSwitch;
     Switch noveltySwitch;
-    
-    Wavetable wable;
-    PluckedString pling;
     Novelty novel;
+
+    LinkedRing<Editor* > fmEditorRing;
+    s16 fmOp1Tab[TABLE_LENGTH];
+    Table fmOperator1Table;
+    FM fam;
+    
+    
+    
+    
+
 
     void handleButtons() {
         scanKeys();
