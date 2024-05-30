@@ -508,8 +508,7 @@ public:
         _hasLifted {true}
     {
         for (int i = 0; i < _numSliders; i++) {
-            _sliders[i].rawx = SCREEN_PADDING;
-            _vals[i] = 0;
+            _sliders[i].rawx = _vals[i] + SCREEN_PADDING;
         }
     }
 
@@ -522,8 +521,14 @@ public:
                _hasLifted = false;
             }
 
-            _sliders[_currentSliderHeld].rawx = touch.px;
-            _vals[_currentSliderHeld] = ((touch.px - SCREEN_PADDING) * _maxVal) / TABLE_MAX;
+            int x = touch.px;
+            if (x < SCREEN_PADDING)
+                x = SCREEN_PADDING;
+            if (x > SCREEN_WIDTH - SCREEN_PADDING)
+                x = SCREEN_WIDTH - SCREEN_PADDING;
+
+            _sliders[_currentSliderHeld].rawx = x;
+            _vals[_currentSliderHeld] = ((x - SCREEN_PADDING) * _maxVal) / TABLE_MAX;
 
             drawSlider(_currentSliderHeld);
             
@@ -555,7 +560,7 @@ private:
 
         int x = _sliders[slider].rawx;
         int yLow = SCREEN_PADDING + (slider*TABLE_MAX / _numSliders);
-        int yHigh = SCREEN_PADDING + ((slider + 1)*TABLE_MAX / _numSliders);
+        int yHigh = SCREEN_PADDING + ((slider + 1)*TABLE_MAX / _numSliders) - 1;
         for (int i = SCREEN_PADDING; i <= SCREEN_WIDTH - SCREEN_PADDING; i++) {
             for (int j = yLow; j < yHigh; j++) {
                 if (i == x)
@@ -563,19 +568,96 @@ private:
                 else
                     VRAM_A[256 * j + i] = RGB15(0, 0, 0);
             }
+            if (yHigh < SCREEN_PADDING + SCREEN_HEIGHT)
+                VRAM_A[256 * yHigh + i] = RGB15(10, 10, 10);
         }  
     }
 
     void drawSliders() {
+        for (int i = 0; i < _numSliders; i++)
+            drawSlider(i);
+    }
+};
+
+class MultiSwitch : public Editor {
+public:
+    MultiSwitch(const char * description, int (&vals)[8], int numSwitches, int maxVal) :
+        Editor(description),
+        _vals (vals),
+        _numSwitches {numSwitches},
+        _maxVal {maxVal},
+        _hasLifted {true}
+    {
+        for (int i = 0; i < _numSwitches; i++) {
+            _switches[i].rawx = SCREEN_PADDING;
+        }
+    }
+
+    void handleTouch() {
+        int keysH = keysHeld();
+        if (keysH & KEY_TOUCH) {
+            touchRead(&touch);
+            if (_hasLifted) {
+                _currentSwitchHeld = (touch.py - SCREEN_PADDING) * _numSwitches / TABLE_MAX;
+               _hasLifted = false;
+            }
+
+            int x = touch.px;
+            if (x < SCREEN_PADDING)
+                x = SCREEN_PADDING;
+            if (x > SCREEN_WIDTH - SCREEN_PADDING)
+                x = SCREEN_WIDTH - SCREEN_PADDING;
+
+            _switches[_currentSwitchHeld].rawx = x;
+            _vals[_currentSwitchHeld] = ((x - SCREEN_PADDING) * _maxVal) / TABLE_LENGTH;
+
+            drawSwitch(_currentSwitchHeld);
+            
+        } else {
+            _hasLifted = true;
+        }
+    }
+
+    void draw() {
+        printInfo();
+        drawSwitches();
+    }
+private:
+    int (&_vals)[8];
+    int _numSwitches;
+    int _currentSwitchHeld;
+    int _maxVal;
+
+    touchPosition touch;
+    bool _hasLifted;
+
+    struct switchInfo {
+        int rawx;
+    };
+
+    struct switchInfo _switches[8]; // multiswitch has max of 8 switches
+
+    void drawSwitch(int whichSwitch) {
+
+        //int x = _switches[whichSwitch].rawx - SCREEN_PADDING;
+        int yLow = SCREEN_PADDING + (whichSwitch*TABLE_MAX / _numSwitches);
+        int yHigh = SCREEN_PADDING + ((whichSwitch + 1)*TABLE_MAX / _numSwitches) - 1;
         for (int i = SCREEN_PADDING; i <= SCREEN_WIDTH - SCREEN_PADDING; i++) {
-            for (int j = SCREEN_PADDING; j <= SCREEN_HEIGHT - SCREEN_PADDING; j++) {
-                struct slider *current = &_sliders[(j - SCREEN_PADDING) * _numSliders / TABLE_MAX];
-                if (i == current->rawx)
+            int x = i - SCREEN_PADDING;
+            for (int j = yLow; j < yHigh; j++) {
+                if ((_vals[whichSwitch]*TABLE_LENGTH)/_maxVal <= x && x < ((_vals[whichSwitch] + 1)*TABLE_LENGTH)/_maxVal)
                     VRAM_A[256 * j + i] = RGB15(31, 31, 31);
                 else
                     VRAM_A[256 * j + i] = RGB15(0, 0, 0);
             }
-        }
+            if (yHigh < SCREEN_PADDING + SCREEN_HEIGHT)
+                VRAM_A[256 * yHigh + i] = RGB15(10, 10, 10);
+        }  
+    }
+
+    void drawSwitches() {
+        for (int i = 0; i < _numSwitches; i++)
+            drawSwitch(i);
     }
 };
 
@@ -646,14 +728,25 @@ class Sine {
 public:
     Sine(int samplingRate) :
     _samplingRate{samplingRate},
-    _t{0} {}
+    _t{0},
+    _freq{0},
+    _resetCounter {0} {}
+
+    int largePhase() {
+        return (_resetCounter++ * _freq * 65536) / _samplingRate;
+    }
 
     s16 sin(int freq) {
-        return sinLerp((_t++ * freq * 65536) / _samplingRate);
+        
+        return sinLerp((_t++ * (_freq = freq) * 65536) / _samplingRate);
     }
+
+    void reset() { _t = 0; _resetCounter = 0; }
 private:
     int _samplingRate;
     s16 _t;
+    int _freq;
+    int _resetCounter;
 };
 
 class Synth {
@@ -929,75 +1022,82 @@ private:
 
 class FM : public Synth {
 public:
-    FM(int gain, int samplingRate) :
+    FM(int gain, int samplingRate, int (&amps)[8], int (&routings)[8], int (&ratios)[8]) :
         Synth(gain, samplingRate),
-        _op1(_samplingRate),
-        _op2(_samplingRate),
-        _op3(_samplingRate),
-        _op4(_samplingRate)
+        _amps (amps),
+        _routings (routings),
+        _ratios (ratios)
     {
         for (int i = 0; i < 13; i++) {
-            infos[i].sine = new Sine(_samplingRate);
+            for (int j = 0; j < 4; j++) {
+                infos[i].ops[j] = new Operator(_samplingRate, infos[i].ops, 4, j, _amps[j], _routings[j], _ratios[j]);
+            }
         }
-
-        _op1.setMod(&_op2);
-        _op2.setRatio(2);
     }
 private:
+    int (&_amps)[8];
+    int (&_routings)[8];
+    int (&_ratios)[8];
+
     class Operator {
     public:
-        Operator(int samplingRate) :
-            sine(samplingRate),
-            _modulator {NULL},
-            _ratio {1},
-            _operation {1} {}
-         
+        Operator(int samplingRate, Operator **ops, int numOps, int id, int &amp, int &routing, int &ratio) :
+            _sine(samplingRate),
+            _ops {ops},
+            _numOps {numOps},
+            _id {id},
+            _amp (amp),
+            _routing (routing),
+            _ratio (ratio) {}
+
         s16 evaluate(int freq) {
-            if (_modulator == NULL) {
-                return sine.sin(freq);
-            } else {
-                switch (_operation) {
-                    case 0: //add
-                        return sine.sin(freq) + _modulator->evaluate(freq);
-                    case 1: // modulate
-                        return sine.sin(freq + _modulator->evaluate(freq));
-                }
+            if (_routing == 5) {
                 return 0;
+            } else {
+                bool doReset = _sine.largePhase() > 4 * 65536;
+                if (doReset) resetSine();
+                s16 modulatorOutput = 0;
+                for (int i = 0; i < _numOps; i++) { // look for modulators
+                    if (_ops[i]->_routing == _id) { // if another operator has this one as a carrier, then...
+                        if (doReset) _ops[i]->resetSine();
+                        modulatorOutput += _ops[i]->evaluate(freq) / 256;
+                    }
+                }
+                return _amp * _sine.sin(_ratio*freq + modulatorOutput) / TABLE_LENGTH;
             }
         }
 
-        void setMod(Operator *op) {
-            _modulator = op;
-        }
-
-        void setRatio(int ratio) {
-            _ratio = ratio;
-        }
-
-        void setOperation(int operation) {
-            _operation = operation;
+        bool doOutput() {
+            return _routing == 4; 
         }
     private:
-        Sine sine;
-        Operator * _modulator;
-        int _ratio;
-        int _operation;
-    };
+        Sine _sine;
+        Operator **_ops;
+        int _numOps;
+        int _id;
+        int &_amp;
+        int &_routing;
+        int &_ratio;
 
-    Operator _op1;
-    Operator _op2;
-    Operator _op3;
-    Operator _op4;
+        void resetSine() {
+            _sine.reset();
+        }
+    };
 
     struct fmInfo {
-        Sine *sine;
+        Operator *ops[4];
     };
-
     struct fmInfo infos[13];
 
     s16 getOutputSample(struct SoundInfo * sound) {
         if (sound->playing) {
-            return infos[sound->key].sine->sin(sound->freq);
+            s16 output = 0;
+            for (int i = 0; i < 4; i++) {
+                if (infos[sound->key].ops[i]->doOutput()) {
+                    output += infos[sound->key].ops[i]->evaluate(sound->freq);
+                }
+            }
+            return output;
         } else {
             return 0;
         }
@@ -1204,8 +1304,13 @@ public:
         novel(27, 20000, novAlg, novTab, novSlid1, novSwitch),
 
         fmEditorRing(),
-        fmAmpMultiSlider("Operator Amplitudes", fmAmpVals, 4, TABLE_LENGTH),
-        fam(1, 32768)
+        fmAmpVals {TABLE_LENGTH - 1, 0, 0, 0},
+        fmAmpMultiSlider("Operator Amplitudes (Ops 1-4)", fmAmpVals, 4, TABLE_LENGTH),
+        fmRouting {4, 5, 5, 5},
+        fmRoutingMultiSwitch("Operator Routing", fmRouting, 4, 6),
+        fmRatios {1, 1, 1, 1},
+        fmRatioMultiSwitch("Operator Ratio", fmRatios, 4, 13),
+        fam(1, 8192, fmAmpVals, fmRouting, fmRatios)
     {
         wavetableEditorRing.add(&transitionCycleSwitch);
         wavetableEditorRing.add(&algorithmSwitch);
@@ -1223,6 +1328,8 @@ public:
         noveltyEditorRing.add(&noveltyTable);
         noveltyEditorRing.add(&noveltyAlgorithmSwitch);
 
+        fmEditorRing.add(&fmRatioMultiSwitch);
+        fmEditorRing.add(&fmRoutingMultiSwitch);
         fmEditorRing.add(&fmAmpMultiSlider);
 
         synEdPairRing.add(new SynEdPair("FM\n\n", &fmEditorRing, &fam));
@@ -1334,6 +1441,10 @@ private:
     LinkedRing<Editor* > fmEditorRing;
     int fmAmpVals[8];
     MultiSlider fmAmpMultiSlider;
+    int fmRouting[8];
+    MultiSwitch fmRoutingMultiSwitch;
+    int fmRatios[8];
+    MultiSwitch fmRatioMultiSwitch;
     FM fam;
 
     void handleButtons() {
