@@ -1,10 +1,13 @@
 #include <nds.h>
-#include <maxmod9.h>
 #include <malloc.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <nf_lib.h>
+#include <fat.h>
 #include "nds/ndstypes.h"
+#include <maxmod9.h>
+#include <string.h>
 
 #define SCREEN_WIDTH 256
 #define SCREEN_HEIGHT 192
@@ -12,53 +15,39 @@
 #define TABLE_LENGTH (SCREEN_WIDTH - 2*SCREEN_PADDING + 1)
 #define TABLE_MAX (SCREEN_HEIGHT - 2*SCREEN_PADDING + 1)
 
+#define PRINT_WIDTH 32
+
 #define SAMPLING_RATE 10000
 #define BUFFER_SIZE 1200
 
 #define DEPOP_FRAMES 50 // enforced attack and release to get rid of the pop
 
-/**
- * What screens do we need?
- * 
- * 1. Wavetable No. 1 Editor <-- Table
- * 2. Wavetable No. 2 Editor <-- Table
- * 3. Transition Shape Editor <-- Table
- * 4. Transition Time Slider <-- Slider
- * 5. Swipe/Lerp Toggle <-- Toggle
- */
+class MidiInfo {
+public:
+    struct midi_info {
+        char name[5];
+        int midi_key_number;
+        int pitch;
+    };
+    struct midi_info info[128];
+    MidiInfo()
+    : info {
+        {"C-2", 0, 8},{"C#-2", 1, 8},{"D-2", 2, 9},{"D#-2", 3, 9},{"E-2", 4, 10},{"F-2", 5, 10},{"F#-2", 6, 11},{"G-2", 7, 12},{"G#-2", 8, 12},{"A-1", 9, 13},{"A#-1", 10, 14},{"B-1", 11, 15},{"C-1", 12, 16},{"C#-1", 13, 17},{"D-1", 14, 18},{"D#-1", 15, 19},{"E-1", 16, 20},{"F-1", 17, 21},{"F#-1", 18, 23},{"G-1", 19, 24},{"G#-1", 20, 25},{"A0", 21, 27},{"A#0", 22, 29},{"B0", 23, 30},{"C0", 24, 32},{"C#0", 25, 34},{"D0", 26, 36},{"D#0", 27, 38},{"E0", 28, 41},{"F0", 29, 43},{"F#0", 30, 46},{"G0", 31, 48},{"G#0", 32, 51},{"A1", 33, 55},{"A#1", 34, 58},{"B1", 35, 61},{"C1", 36, 65},{"C#1", 37, 69},{"D1", 38, 73},{"D#1", 39, 77},{"E1", 40, 82},{"F1", 41, 87},{"F#1", 42, 92},{"G1", 43, 97},{"G#1", 44, 103},{"A2", 45, 110},{"A#2", 46, 116},{"B2", 47, 123},{"C2", 48, 130},{"C#2", 49, 138},{"D2", 50, 146},{"D#2", 51, 155},{"E2", 52, 164},{"F2", 53, 174},{"F#2", 54, 184},{"G2", 55, 195},{"G#2", 56, 207},{"A3", 57, 220},{"A#3", 58, 233},{"B3", 59, 246},{"C3", 60, 261},{"C#3", 61, 277},{"D3", 62, 293},{"D#3", 63, 311},{"E3", 64, 329},{"F3", 65, 349},{"F#3", 66, 369},{"G3", 67, 391},{"G#3", 68, 415},{"A4", 69, 440},{"A#4", 70, 466},{"B4", 71, 493},{"C4", 72, 523},{"C#4", 73, 554},{"D4", 74, 587},{"D#4", 75, 622},{"E4", 76, 659},{"F4", 77, 698},{"F#4", 78, 739},{"G4", 79, 783},{"G#4", 80, 830},{"A5", 81, 880},{"A#5", 82, 932},{"B5", 83, 987},{"C5", 84, 1046},{"C#5", 85, 1108},{"D5", 86, 1174},{"D#5", 87, 1244},{"E5", 88, 1318},{"F5", 89, 1396},{"F#5", 90, 1479},{"G5", 91, 1567},{"G#5", 92, 1661},{"A6", 93, 1760},{"A#6", 94, 1864},{"B6", 95, 1975},{"C6", 96, 2093},{"C#6", 97, 2217},{"D6", 98, 2349},{"D#6", 99, 2489},{"E6", 100, 2637},{"F6", 101, 2793},{"F#6", 102, 2959},{"G6", 103, 3135},{"G#6", 104, 3322},{"A7", 105, 3520},{"A#7", 106, 3729},{"B7", 107, 3951},{"C7", 108, 4186},{"C#7", 109, 4434},{"D7", 110, 4698},{"D#7", 111, 4978},{"E7", 112, 5274},{"F7", 113, 5587},{"F#7", 114, 5919},{"G7", 115, 6271},{"G#7", 116, 6644},{"A8", 117, 7040},{"A#8", 118, 7458},{"B8", 119, 7902},{"C8", 120, 8372},{"C#8", 121, 8869},{"D8", 122, 9397},{"D#8", 123, 9956},{"E8", 124, 10548},{"F8", 125, 11175},{"F#8", 126, 11839},{"G8", 127, 12543}
+    } {}
+};
 
 struct SoundInfo {
     int key; // which key does this sound info go to?
 	bool playing; // is the note currently playing?
     bool justPressed; // was the note just initially pressed (different from held)
     bool stopping; // used for depopping
-    bool pingPongDirection; // true for forward, false for backwards
-	int transitionFramesElapsed; // frames elapsed since start of tone
     int phaseFramesElapsed; // frames elapsed used for calculating phase. will be modded and deviate from actual frames elapsed
-    int morphTableIndex; // the current position in the morph table
     int freq; // the frequency of the sound to be played
     int depopFramesElapsed; // used for depopping
     int lastSampleOutputted; // used for depopping
 };
 
 struct SoundInfo sounds[13];
-
-/**
- * Variables for Wavetable
- */
-s16 wave1Array[TABLE_LENGTH];
-s16 wave2Array[TABLE_LENGTH];
-s16 transition[TABLE_LENGTH];
-int transitionTime = 0;
-int algorithm = 0; // 0. morph 1. swipe 2. combo
-int transitionCycle = 0; // 0. forward 1. loop 2. ping pong
-
-/**
- * variables for Plucked String
- */
-int blendFactor = 0; 
-int burstType = 0; // 0. random 1. wavetable
-s16 burstArray[TABLE_LENGTH];
 
 PrintConsole *pc;
 
@@ -124,9 +113,9 @@ public:
     }
 
 private:
-    class Node {
-    public:
-        Node* prev;
+class Node {
+public:
+    Node* prev;
         T datum;
         Node* next;
         Node(Node* prev_, T datum_, Node* next_) : prev{prev_}, datum{datum_}, next{next_} {}
@@ -134,6 +123,31 @@ private:
 
     Node* current;
     int size;
+};
+
+class KonamiCodeDetector {
+    int _sequence[9];
+    int _current;
+public:
+    KonamiCodeDetector() 
+    : 
+        _sequence {KEY_UP, KEY_UP, KEY_DOWN, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_A, KEY_B, KEY_START},
+        _current {0}
+    {}
+
+    bool next(int key) {
+        if (key & _sequence[_current])
+            _current++;
+        else
+            _current = 0;
+
+        if (_current == 9) {
+            _current = 0;
+            return true;
+        } else {
+            return false;
+        }
+    }
 };
 
 /**
@@ -282,10 +296,7 @@ private:
         if (pitchIndex >= 0 && pitchIndex < 120) { // only play if pitch is within the table
             sounds[i].playing = true;
             sounds[i].freq = pitches[pitch + (12 * octave) + i];
-            sounds[i].transitionFramesElapsed = 0;
             sounds[i].phaseFramesElapsed = 0;
-            sounds[i].morphTableIndex = 0;
-            sounds[i].pingPongDirection = true;
         }
     }
 
@@ -726,32 +737,40 @@ mm_stream mystream;
  */
 class Sine {
 public:
-    Sine(int samplingRate) :
-    _samplingRate{samplingRate},
-    _t{0},
-    _freq{0},
-    _resetCounter {0} {}
+    int _framesElapsed;
+    int64 _phase;
 
-    int largePhase() {
-        return (_resetCounter++ * _freq * 65536) / _samplingRate;
-    }
+    Sine(int samplingRate) :
+        _framesElapsed {0},
+        _samplingRate{samplingRate},
+        _t{0},
+        _freq{0} {}
+
+    void reset() { _t = 0; _framesElapsed = 0; }
+
+    /*int largePhase() {
+        return (_framesElapsed++ * _freq * 65536) / _samplingRate;
+    }*/
 
     s16 sin(int freq) {
-        
-        return sinLerp((_t++ * (_freq = freq) * 65536) / _samplingRate);
+        _phase = (_t++ * (_freq = freq) * 65536) / _samplingRate;
+        return sinLerp(_phase % 65536);
     }
-
-    void reset() { _t = 0; _resetCounter = 0; }
+    
 private:
     int _samplingRate;
-    s16 _t;
+    int64 _t;
     int _freq;
-    int _resetCounter;
+    
 };
 
 class Synth {
 public:
-    Synth(int gain, int samplingRate) : _gain{gain}, _samplingRate{samplingRate} {}
+    Synth(int gain, int samplingRate, bool sfzExportAvailable) :
+        _gain{gain},
+        _samplingRate{samplingRate},
+        _sfzExportAvailable{sfzExportAvailable}
+    {}
     virtual s16 frameOutput() {
         s16 output = 0;
         for (int i = 0; i < 13; i++) {
@@ -764,13 +783,17 @@ public:
         mystream.sampling_rate = _samplingRate;
         mmStreamOpen( &mystream );
     }
+
+    virtual void exportSFZ() = 0;
+    
 protected:
     int _gain;
     int _samplingRate;
+    bool _sfzExportAvailable;
     virtual s16 getOutputSample(struct SoundInfo * sound) = 0;
 };
 
-class VariableLengthWavetable : public Synth {
+/*class VariableLengthWavetable : public Synth {
 public:
 protected:
     struct info {
@@ -779,15 +802,17 @@ protected:
         s16 table[3000];
     };
     struct info infos[13];
-};
+};*/
 
 class ExcitedString : public Synth {
 public:
     ExcitedString(int gain, int samplingRate, s16 (&table)[TABLE_LENGTH], int &slider1Val, int &switchVal) :
-    Synth(gain, samplingRate),
+    Synth(gain, samplingRate, false),
     _table(table),
     _slider1Val(slider1Val),
     _switchVal(switchVal) {}
+
+    void exportSFZ() {}
 private:
     Random randy;
 
@@ -839,15 +864,18 @@ private:
             return 0;
         }
     }
+
 };
 
 class BubbleSort : public Synth {
 public:
     BubbleSort(int gain, int samplingRate, s16 (&table)[TABLE_LENGTH], int &slider1Val, int &switchVal) :
-    Synth(gain, samplingRate),
+    Synth(gain, samplingRate, false),
     _table(table),
     _slider1Val(slider1Val),
     _switchVal(switchVal) {}
+
+    void exportSFZ() {}
 private:
     s16 (&_table)[TABLE_LENGTH];
     int &_slider1Val; // used for probabalistic stretching
@@ -915,10 +943,12 @@ private:
 class XOR : public Synth {
 public:
     XOR(int gain, int samplingRate, s16 (&table)[TABLE_LENGTH], int &slider1Val, int &switchVal) :
-    Synth(gain, samplingRate),
+    Synth(gain, samplingRate, false),
     _table(table),
     _slider1Val(slider1Val),
     _switchVal(switchVal) {}
+
+    void exportSFZ() {}
 private:
     Random randy;
 
@@ -984,7 +1014,7 @@ private:
 class Novelty : public Synth {
 public:
     Novelty(int gain, int samplingRate, int &algorithm, s16 (&table)[TABLE_LENGTH], int &slider1Val, int &switchVal) :
-    Synth(gain, samplingRate),
+    Synth(gain, samplingRate, false),
     _algorithm(algorithm),
     _table(table),
     _slider1Val(slider1Val),
@@ -1007,6 +1037,8 @@ public:
         }
         return 0;
     }
+
+    void exportSFZ() {}
 private:
     int &_algorithm;
     s16 (&_table)[TABLE_LENGTH];
@@ -1023,7 +1055,7 @@ private:
 class FM : public Synth {
 public:
     FM(int gain, int samplingRate, int (&amps)[8], int (&routings)[8], int (&ratios)[8]) :
-        Synth(gain, samplingRate),
+        Synth(gain, samplingRate, false),
         _amps (amps),
         _routings (routings),
         _ratios (ratios)
@@ -1034,6 +1066,8 @@ public:
             }
         }
     }
+
+    void exportSFZ() {}
 private:
     int (&_amps)[8];
     int (&_routings)[8];
@@ -1054,12 +1088,14 @@ private:
             if (_routing == 5) {
                 return 0;
             } else {
-                bool doReset = _sine.largePhase() > 4 * 65536;
-                if (doReset) resetSine();
+                bool doReset = false; // _sine._phase > 65536;
+                if (doReset)
+                    resetSine();
                 s16 modulatorOutput = 0;
                 for (int i = 0; i < _numOps; i++) { // look for modulators
                     if (_ops[i]->_routing == _id) { // if another operator has this one as a carrier, then...
-                        if (doReset) _ops[i]->resetSine();
+                        if (doReset)
+                            _ops[i]->resetSine();
                         modulatorOutput += _ops[i]->evaluate(freq) / 256;
                     }
                 }
@@ -1106,8 +1142,26 @@ private:
 
 class PluckedString : public Synth {
 public:
-    PluckedString(int gain, int samplingRate) : Synth(gain, samplingRate) {}
+// pling(27, 20000, blendFactor, burstType, burstArray),
+    PluckedString(
+        int gain,
+        int samplingRate,
+        int &blendFactor,
+        int &burstType,
+        s16 (&burstArray)[TABLE_LENGTH]
+    ) : 
+        Synth(gain, samplingRate, false),
+        _blendFactor (blendFactor),
+        _burstType (burstType),
+        _burstArray (burstArray)
+    {}
+
+    void exportSFZ() {}
 private:
+    int &_blendFactor;
+    int &_burstType;
+    s16 (&_burstArray)[TABLE_LENGTH];
+
     struct pluckInfo {
         int length;
         int phase;
@@ -1126,7 +1180,7 @@ private:
                 // 1. calculate length
                 pluck->length = _samplingRate / sound->freq;
                 // 2. fill the burst table
-                switch (burstType) {
+                switch (_burstType) {
                     case 0: { // fill the burst table with random
                         for (int i = 0; i < pluck->length; i++) {
                             pluck->table[i] = rand() % TABLE_MAX;
@@ -1135,7 +1189,7 @@ private:
                     }
                     case 1: { // fill the burst table with a squeezed rendition of the burstArray (filled by a table editor)
                         for (int i = 0; i < pluck->length; i++) {
-                            pluck->table[i] = burstArray[Lerp::lerp(0, TABLE_LENGTH - 1, i, pluck->length - 1)];
+                            pluck->table[i] = _burstArray[Lerp::lerp(0, TABLE_LENGTH - 1, i, pluck->length - 1)];
                         }
                         break;
                     }
@@ -1148,62 +1202,237 @@ private:
             }
             int phase = pluck->phase++ % pluck->length;
             int current = pluck->table[phase];
-            pluck->table[phase] = (randy.prob(blendFactor, TABLE_LENGTH - 1) ? 1 : -1) * ((current + pluck->previous) >> 1);
+            pluck->table[phase] = (randy.prob(_blendFactor, TABLE_LENGTH - 1) ? 1 : -1) * ((current + pluck->previous) >> 1);
             pluck->previous = current;
             return _gain * pluck->table[phase];
         } else {
             return 0;
         }
     }
+
 };
 
 class Wavetable : public Synth {
 public:
-    Wavetable(int gain, int samplingRate) : Synth(gain, samplingRate) {}
-private:
-
-    /**
-     * @param v0 the first value for the lerp
-     * @param v1 the second value for the lerp
-     * @param dialCurrent how many steps have taken place
-     * @param dialMax how many steps are there between v0 and v1
-     */
-    int lerp(int v0, int v1, int dialCurrent, int dialMax) {
-        if (dialCurrent <= 0)
-            return v0;
-        if (dialCurrent >= dialMax)
-            return v1;
-        return v0 + ((dialCurrent * (v1 - v0)) / dialMax);
+    Wavetable(
+        int gain,
+        int samplingRate,
+        s16 (&wave1Array)[TABLE_LENGTH],
+        s16 (&wave2Array)[TABLE_LENGTH],
+        s16 (&transition)[TABLE_LENGTH],
+        int &transitionTime,
+        int &algorithm,
+        int &transitionCycle
+     ) :
+        Synth(gain, samplingRate, true),
+        _wave1Array (wave1Array),
+        _wave2Array (wave2Array),
+        _transition (transition),
+        _transitionTime (transitionTime),
+        _algorithm (algorithm),
+        _transitionCycle (transitionCycle)
+    {
+        for (int i = 0; i < TABLE_LENGTH; i++) {
+            wave1Array[i] = 0;
+            wave2Array[i] = 0;
+            transition[i] = 0;
+        }
     }
+
+    struct wav_header {
+        char riff[4];
+        int32_t flength;
+        char wave[4];
+        char fmt[4];
+        int32_t chunk_size;
+        int16_t format_tag;
+        int16_t num_chans;
+        int32_t sample_rate;
+        int32_t bytes_per_second;
+        int16_t bytes_per_sample;
+        int16_t bits_per_sample;
+        char data[4];
+        int32_t dlength;
+    };
+
+    void exportSingleSample(FILE * savefile, int freq) {
+        //printf("exporting sample... ");
+        
+        struct wav_header wavh;
+        strncpy(wavh.riff, "RIFF", 4);
+        strncpy(wavh.wave, "WAVE", 4);
+        strncpy(wavh.fmt, "fmt ", 4);
+        strncpy(wavh.data, "data", 4);
+
+        wavh.chunk_size = 16;
+        wavh.format_tag = 1;
+        wavh.num_chans = 1;
+        wavh.sample_rate = _samplingRate;
+        wavh.bits_per_sample = 16;
+        wavh.bytes_per_sample = (wavh.bits_per_sample * wavh.num_chans) / 8;
+        wavh.bytes_per_second = wavh.sample_rate * wavh.bytes_per_sample;
+
+        
+        wavExport.exporting = true;
+        struct SoundInfo sample;
+        sample.playing = true;
+        sample.freq = freq;
+        sample.phaseFramesElapsed = 0;
+        sample.justPressed = true;
+        while (wavExport.exporting) { // first we need to find out how long the sample is going to be
+            getOutputSample(&sample);
+        }
+
+        //printf("\nfirst pass: %d samples\n", wavExport.exportFramesElapsed);
+        
+        wavh.dlength = (wavExport.exportFramesElapsed + 1) * wavh.bytes_per_sample;
+        wavh.flength = wavh.dlength + 44;
+
+        //FILE* savefile = fopen(file_path, "w");
+        fwrite(&wavh, sizeof(wavh), 1, savefile);
+
+        //printf("made it past header. ");
+        
+        sample.playing = true;
+        sample.freq = freq;
+        sample.phaseFramesElapsed = 0;
+        sample.justPressed = true;
+        wavExport.exporting = true;
+        while (wavExport.exporting) {
+            s16 output = getOutputSample(&sample);
+            fwrite(&output, sizeof(output), 1, savefile);
+        }
+
+        //printf("made it past data export. ");
+
+        //printf("\nsecond pass: %d samples\n", wavExport.exportFramesElapsed);
+        
+        //printf("done exporting sample! %d bytes\n", wavh.flength);
+
+        //fclose(savefile);
+    }
+
+    void exportSFZ() {
+        pc->cursorX = 0;
+        pc->cursorY = 14;
+        printf("exporting");
+        FILE* sfz = fopen("WaveTableSynth/wable.sfz", "w");
+        char global_parameters[] = "<global> loop_mode=loop_continuous\n\n";
+        fwrite(global_parameters, sizeof(char), strlen(global_parameters), sfz);
+
+        MidiInfo midi = MidiInfo();
+        for (int midi_index = 0; midi_index < 128; midi_index++) {
+            char file_name[64];
+            sprintf(file_name, "WaveTableSynth/%s.wav", midi.info[midi_index].name);
+            FILE* sample = fopen(file_name, "w");
+
+            exportSingleSample(sample, midi.info[midi_index].pitch);
+
+            //printf("past export sample");
+
+            fclose(sample);
+
+            sprintf(file_name, "%s.wav", midi.info[midi_index].name);
+
+            char sfz_region_data[128];
+            sprintf(
+                sfz_region_data,
+                "<region> sample=%s key=%d loop_start=%d loop_end=%d\n\n",
+                file_name,
+                midi.info[midi_index].midi_key_number,
+                wavExport.loopStart,
+                wavExport.loopEnd
+            );
+            fwrite(sfz_region_data, sizeof(char), strlen(sfz_region_data), sfz);
+
+            pc->cursorX = Lerp::lerp(0, PRINT_WIDTH, midi_index, 128);
+            pc->cursorY = 15;
+            printf("|");
+        }
+
+        fclose(sfz);
+        pc->cursorX = 0;
+        pc->cursorY = 14;
+        printf("done                ");
+    }
+private:
+    s16 (&_wave1Array)[TABLE_LENGTH];
+    s16 (&_wave2Array)[TABLE_LENGTH];
+    s16 (&_transition)[TABLE_LENGTH];
+    int &_transitionTime;
+    int &_algorithm;
+    int &_transitionCycle;
+
+    struct wableInfo {
+        int transitionFramesElapsed;
+        bool pingPongDirection;
+    };
+
+    struct wableInfo infos[13];
+
+    struct exportFrameData {
+        bool exporting; // while exporting is true, continue retrieving samples
+        s16 sample; // the current sample to export
+        int exportFramesElapsed; // the frame of the export we are on
+        int loopStart; // the sample at which the looping portion starts
+        int loopEnd; // the sample at which the looping portion ends
+    };
+
+    struct exportFrameData wavExport;
 
     int getWavePhase(struct SoundInfo * sound) {
 	    int phase = div32((sound->phaseFramesElapsed * sound->freq * TABLE_LENGTH), _samplingRate);
         if (phase > 8 * TABLE_LENGTH) {
             sound->phaseFramesElapsed = 0;
+            if (wavExport.exporting) {
+                // if the transition cycle is in forward mode and the export frames elapsed is greater than the max transition time,
+                // then we need to start setting up loop points and end the exporting process
+                if (_transitionCycle == 0 && wavExport.exportFramesElapsed > _transitionTime) {
+                    if (wavExport.loopStart == -1) {
+                        wavExport.loopStart = wavExport.exportFramesElapsed;
+                    } else {
+                        wavExport.loopEnd = wavExport.exportFramesElapsed;
+                        wavExport.exporting = false;
+                    }
+                }
+            }
         }
         return phase % TABLE_LENGTH;
     }
 
     int getTransitionIndex(struct SoundInfo * sound) {
-        return lerp(0, TABLE_LENGTH - 1, sound->transitionFramesElapsed, transitionTime);
+        struct wableInfo * info = &infos[sound->key];
+        return Lerp::lerp(0, TABLE_LENGTH - 1, info->transitionFramesElapsed, _transitionTime);
     }
 
     void incrementFrameCount(struct SoundInfo * sound) {
+        struct wableInfo * info = &infos[sound->key];
         sound->phaseFramesElapsed++;
-        switch (transitionCycle) {
+        switch (_transitionCycle) {
             case 0:
-                sound->transitionFramesElapsed++;
+                info->transitionFramesElapsed++;
                 break;
             case 1:
-                sound->transitionFramesElapsed = (sound->transitionFramesElapsed + 1) % transitionTime;
+                info->transitionFramesElapsed = (info->transitionFramesElapsed + 1) % _transitionTime;
+                if (wavExport.exporting && wavExport.exportFramesElapsed >= _transitionTime) {
+                    wavExport.loopStart = 0;
+                    wavExport.loopEnd = wavExport.exportFramesElapsed;
+                    wavExport.exporting = false;
+                }
                 break;
             case 2: {
-                if (sound->pingPongDirection == true) {
-                    if (sound->transitionFramesElapsed++ >= transitionTime)
-                        sound->pingPongDirection = false;
+                if (info->pingPongDirection == true) {
+                    if (info->transitionFramesElapsed++ >= _transitionTime)
+                        info->pingPongDirection = false;
                 } else {
-                    if (sound->transitionFramesElapsed-- <= 0)
-                        sound->pingPongDirection = true;
+                    if (info->transitionFramesElapsed-- <= 0) {
+                        info->pingPongDirection = true;
+                        if (wavExport.exporting) {
+                            wavExport.loopStart = 0;
+                            wavExport.loopEnd = wavExport.exportFramesElapsed;
+                            wavExport.exporting = false;
+                        }
+                    }
                 }
                 break;
             }
@@ -1212,21 +1441,32 @@ private:
     }
 
     s16 getOutputSample(struct SoundInfo * sound) {
+        struct wableInfo * info = &infos[sound->key];
         if (sound->playing) {
+            if (sound->justPressed) {
+                if (wavExport.exporting) {
+                    wavExport.exportFramesElapsed = 0;
+                    wavExport.loopStart = -1;
+                    wavExport.loopEnd = -1;
+                }
+                info->pingPongDirection = true;
+                info->transitionFramesElapsed = 0;
+                sound->justPressed = false;
+            }
             int phase = getWavePhase(sound);
-            s16 sample1 = wave1Array[phase];
-            s16 sample2 = wave2Array[phase];
+            s16 sample1 = _wave1Array[phase];
+            s16 sample2 = _wave2Array[phase];
             
-            int transitionValue = transition[getTransitionIndex(sound)];
+            int transitionValue = _transition[getTransitionIndex(sound)];
 
             int output;
-            switch (algorithm) {
+            switch (_algorithm) {
                 case 0: { // Morph algorithm
-                    output = lerp(sample1, sample2, transitionValue, TABLE_MAX - 1);
+                    output = Lerp::lerp(sample1, sample2, transitionValue, TABLE_MAX - 1);
                     break;
                 }
                 case 1: { // Swipe algorithm
-                    int split = lerp(0, TABLE_LENGTH - 1, transitionValue, TABLE_MAX - 1);
+                    int split = Lerp::lerp(0, TABLE_LENGTH - 1, transitionValue, TABLE_MAX - 1);
                     if (phase > split)
                         output = sample1;
                     else
@@ -1234,14 +1474,14 @@ private:
                     break;
                 }
                 case 2: { // using a combination of both algorithms
-                    int morph = lerp(sample1, sample2, transitionValue, TABLE_MAX - 1);
+                    int morph = Lerp::lerp(sample1, sample2, transitionValue, TABLE_MAX - 1);
                     int swipe;
-                    int split = lerp(0, TABLE_LENGTH - 1, transitionValue, TABLE_MAX - 1);
+                    int split = Lerp::lerp(0, TABLE_LENGTH - 1, transitionValue, TABLE_MAX - 1);
                     if (phase > split)
                         swipe = sample1;
                     else
                         swipe = sample2;
-                    output = lerp(swipe, morph, transitionValue, TABLE_MAX - 1);
+                    output = Lerp::lerp(swipe, morph, transitionValue, TABLE_MAX - 1);
                     break;
                 }
                 default: // if the default is reached, something went wrong
@@ -1250,18 +1490,24 @@ private:
 
             // if the note just started, depop by lerping to initial output
             if (sound->depopFramesElapsed < DEPOP_FRAMES) {
-                output = lerp(0, output, sound->depopFramesElapsed++, DEPOP_FRAMES);
+                output = Lerp::lerp(0, output, sound->depopFramesElapsed++, DEPOP_FRAMES);
             } else {
                 incrementFrameCount(sound);
             }
             
             sound->lastSampleOutputted = _gain * output;
 
+            // if the sound is exporting, increment export frame count and set the sample to export
+            if (wavExport.exporting) {
+                wavExport.exportFramesElapsed++;
+                wavExport.sample = _gain * output;
+            }
+
             return _gain * output;
         } else {
             int output;
             if (sound->stopping) {
-                output = lerp(0, sound->lastSampleOutputted, sound->depopFramesElapsed--, DEPOP_FRAMES);
+                output = Lerp::lerp(0, sound->lastSampleOutputted, sound->depopFramesElapsed--, DEPOP_FRAMES);
                 if (sound->depopFramesElapsed <= 0)
                     sound->stopping = false;
             } else {
@@ -1271,6 +1517,7 @@ private:
             return output;
         }
     }
+
 };
 
 class App {
@@ -1285,13 +1532,13 @@ public:
         morphTimeSlider("Transition Time\n Left:  0 seconds\n Right: 10 seconds", transitionTime, SAMPLING_RATE * 10),
         algorithmSwitch("Transition Algorithm\n 1. Morph\n 2. Swipe\n 3. Combos", algorithm, 3),
         transitionCycleSwitch("Transition Cycle Mode\n 1. Forward\n 2. Loop\n 3. Ping Pong", transitionCycle, 3),
-        wable(54, 10000),
+        wable(54, 10000, wave1Array, wave2Array, transition, transitionTime, algorithm, transitionCycle),
 
         pluckedEditorRing(),
         drumSlider("Blend Factor\n Left:   ???\n Middle: Drum\n Right:  Plucked String", blendFactor, TABLE_LENGTH),
         burstTypeSwitch("Burst Type\n 1. Random\n 2. Wavetable", burstType, 2),
         burstTable("Burst Wavetable", burstArray),
-        pling(27, 20000),
+        pling(27, 20000, blendFactor, burstType, burstArray),
 
         noveltyEditorRing(),
         novAlg{0},
@@ -1413,17 +1660,26 @@ private:
     LinkedRing<SynEdPair *> synEdPairRing;
 
     LinkedRing<Editor *> wavetableEditorRing;
+    s16 wave1Array[TABLE_LENGTH];
     Table waveTableOne;
+    s16 wave2Array[TABLE_LENGTH];
     Table waveTableTwo;
+    s16 transition[TABLE_LENGTH];
     Table morphShapeTable;
+    int transitionTime = 0;
     Slider morphTimeSlider;
+    int algorithm = 0; // 0. morph 1. swipe 2. combo
     Switch algorithmSwitch;
+    int transitionCycle = 0; // 0. forward 1. loop 2. ping pong
     Switch transitionCycleSwitch;
     Wavetable wable;
 
     LinkedRing<Editor *> pluckedEditorRing;
+    int blendFactor = 0;
     Slider drumSlider;
+    int burstType = 0; // 0. random 1. wavetable
     Switch burstTypeSwitch;
+    s16 burstArray[TABLE_LENGTH];
     Table burstTable;
     PluckedString pling;
 
@@ -1447,9 +1703,15 @@ private:
     MultiSwitch fmRatioMultiSwitch;
     FM fam;
 
+    KonamiCodeDetector komani;
+
     void handleButtons() {
         scanKeys();
 		int keysD = keysDown();
+        if (keysD && komani.next(keysD)) {
+            synEdPairRing.curr()->getSynth()->exportSFZ();
+            //wable.exportSingleSample(440);
+        }
         if (keysD & KEY_L) {
             synEdPairRing.curr()->getEditorRing()->prev();
             synEdPairRing.curr()->onEditorSwitch();
@@ -1512,6 +1774,12 @@ int main( void ) {
 //---------------------------------------------------------------------------------
 	pc = consoleDemoInit();
 	
+    if (fatInitDefault())
+		printf("LibFat succesful init\n");
+	else
+		printf("LibFat ini'nt succesful\n");
+	NF_SetRootFolder("WaveTableSynth");
+
 	videoSetMode(MODE_FB0);
 	vramSetBankA(VRAM_A_LCD);
 
@@ -1519,13 +1787,7 @@ int main( void ) {
     
     app.initScreen();
 
-    // initialize all global variables
-    for (int i = 0; i < TABLE_LENGTH; i++) {
-        wave1Array[i] = 0;
-        wave2Array[i] = 0;
-        transition[i] = 0;
-    }
-    transitionTime = 0;
+    
     for (int i = 0; i < 13; i++) {
         sounds[i].key = i;
         sounds[i].justPressed = true;
