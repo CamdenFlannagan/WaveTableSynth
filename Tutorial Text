@@ -1,0 +1,104 @@
+Welcome to the Wavetable Synth \n
+ for the Nintendo DS!\n\n
+
+You're probably wondering how to\n
+ operate this application, but\n
+ wonder no longer! I'm forcing\n
+ you, yes YOU, to take part in\n
+ a magnificent tutorial!\n\n
+
+Press the right shoulder button\n
+ to continue. . .
+===============================
+This is a table editor! In this\n
+ application you will navigate \n
+ through various editors that \n
+ you can use to control the \n
+ sound in several ways.\n\n
+
+Try drawing on the touch screen\n\n
+
+To cycle through editor screens\n
+ use shoulder buttons. Use the \n
+ right shoulder button to \n
+ continue. . .
+===============================
+There are four main ways to \n
+ make sound with this app:\n
+ 1. Pressing X to play a\n
+    testing tone\n
+ 2. Using the Easy Piano Option\n
+    Pak\n
+ 3. Exporting an sfz file to\n
+    use with other music\n
+    software\n\n
+
+Use the d-pad to change the\n
+ root note of the app. Vertical\n
+ directions for octave and \n
+ horizontal for semitone.\n\n
+
+Press the right shoulder button\n
+ to continue. . .
+==============================
+If you use the Konami Code\n
+ while in a synth mode that\n
+ supports sfz exporting, then\n
+ sfz exporting will begin.\n
+ Consult the README for file\n
+ setup.\n\n
+
+Use the select button to cycle\n
+ through synth modes and exit\n
+ this tutorial. . .
+===============================
+Wavetable One\n\n
+
+A wavetable synthesizer works\n
+ by taking one period of a wave\n
+ and looping through it at\n
+ various frequencies.\n\n
+
+Use the table editor below to\n
+ draw one period of a wave.
+===============================
+Transition Shape\n\n
+
+This table editor isn't used to\n
+ draw a wave. Instead, it is\n
+ used to define how wave 1 will\n
+ transition to wave 2 over time.\n\n
+
+Fully up means only the first\n
+ wave will play. Fully down\n
+ means only the second wave\n
+ play. Halfway means a wave\n
+ halfway between both waves\n
+ play.
+===============================
+This slider determines how long\n
+ it takes to go through the\n
+ transition shape.
+===============================
+What does halfway between two\n
+ waves mean anyway?\n\n
+
+In my opinion, I see two main\n
+ ways of interpreting this:\n
+ 1. morph: an average of both\n
+    waves\n
+ 2. swipe: the first half of\n
+    wave 1 tacked onto the\n
+    second half of wave 2\n
+===============================
+In forward mode, when the right\n
+ of the transition shape is\n
+ reached, it stays at the right\n
+In loop mode, when the right is\n
+ reached, it loops back to the\n
+ left of the transition shape\n
+In ping-pong mode, when the\n
+ right is reached, it starts\n
+ going backwards to the left,\n
+ then back to the right, ad\n
+ infinitum.

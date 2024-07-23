@@ -20,7 +20,7 @@
 #define SAMPLING_RATE 10000
 #define BUFFER_SIZE 1200
 
-#define DEPOP_FRAMES 50 // enforced attack and release to get rid of the pop
+#define DEPOP_FRAMES 50
 
 class MidiInfo {
 public:
@@ -36,15 +36,46 @@ public:
     } {}
 };
 
+/**
+ * NOTE TO FUTURE PROGRAMMERS - What's a SoundInfo?
+ * 
+ * Welcome to the SoundInfo struct, a super handy set of ints and bools that will
+ * help you keep track of important audio data. You might notice that just below the
+ * struct SoundInfo definition is a declaration of a global array of 13 SoundInfos called
+ * sounds. 13 SoundInfos for the 13 keys of the EasyPiano Addon. 
+ * 
+ * One very important thing I'd like to tell you is that some of the fields in these structs
+ * will be set automatically, they won't do anything to your sound unless you explicitly
+ * choose to use the information held by them. You can ignore these entirely and make a Bytebeat
+ * player if you so desire. Or you could use them and make a Bytebeat piano! The possibilities
+ * are endless!
+ * 
+ * Some of the fields will be set for you automatically by the Piano class. These are "key,"
+ * which tells you which of the 13 piano keys is associated with the SoundInfo; "playing," 
+ * which tells you the key associated with the SoundInfo is being held; "justPressed," 
+ * letting you know that the piano key was just pressed (this is handy if you need to fill
+ * an array, initialize some variables, or take care of other business that should only happen
+ * once, at the start of the tone. Make sure you set it to false once you're done doing
+ * all your initialization, because this WON'T happen automatically. It will be set to true
+ * again next time the key is pressed); "stopping," which lets you know the key was just released,
+ * which can be useful if you need to add a release envelope; and "freq," which gives you an
+ * integer approximation of the frequency associated with the key (see more about the frequency
+ * array by the Piano class).
+ * 
+ * Other fields are only set as needed. You can use them if you want them, or you can ignore them
+ * and do your own thing. I like to use "phaseFramesElapsed" as a counter telling me how many frames
+ * have passed. I use it pretty often when calculating phase, hence the name. If you need a general
+ * "totalFramesElapsed" field, you can add one.  
+ */
 struct SoundInfo {
     int key; // which key does this sound info go to?
 	bool playing; // is the note currently playing?
     bool justPressed; // was the note just initially pressed (different from held)
-    bool stopping; // used for depopping
-    int phaseFramesElapsed; // frames elapsed used for calculating phase. will be modded and deviate from actual frames elapsed
-    int freq; // the frequency of the sound to be played
-    int depopFramesElapsed; // used for depopping
-    int lastSampleOutputted; // used for depopping
+    bool stopping;
+    int phaseFramesElapsed;
+    int freq;
+    int depopFramesElapsed;
+    int lastSampleOutputted;
 };
 
 struct SoundInfo sounds[13];
@@ -259,7 +290,7 @@ public:
 
     void printRoot() {
         pc->cursorX = 0;
-        pc->cursorY = 10;
+        pc->cursorY = 23;
         int noteNameIndex = pitch;
         // code snippet taken from https://shadyf.com/blog/notes/2016-07-16-modulo-for-negative-numbers/
         printf("Root: %s", noteNames[((noteNameIndex %= 12) < 0) ? noteNameIndex+12 : noteNameIndex]);
@@ -392,6 +423,13 @@ private:
         table[x - SCREEN_PADDING] = y - SCREEN_PADDING;
     }
 
+    /**
+     * NOTE TO FUTURE PROGRAMMERS
+     * 
+     * Welcome to probably the derpiest line drawing algorithm in existance. It works,
+     * but only barely, and honestly that depends on how we define "works." It does everything
+     * it needs to, but boy oh boy it is a stretch to call the this a line drawing algorithm.
+     */
     void drawLine(int x1, int y1, int x2, int y2) {
         if (x1 == x2) {
             setPixel(x1, y1);
@@ -672,6 +710,16 @@ private:
     }
 };
 
+class EmptyEditor : public Editor {
+public:
+    EmptyEditor(const char * description) : Editor(description) {}
+    void draw() {
+        clear();
+        printInfo();
+    }
+    void handleTouch() {}
+};
+
 /**
  * Uses Xorshift algorithm copied from https://en.wikipedia.org/wiki/Xorshift.
  */
@@ -753,8 +801,12 @@ public:
     }*/
 
     s16 sin(int freq) {
-        _phase = (_t++ * (_freq = freq) * 65536) / _samplingRate;
-        return sinLerp(_phase % 65536);
+        _phase = ((_t++ - 32768) * (_freq = freq) * 65536) / _samplingRate;
+        if (_phase > 32767) {
+            _phase -= 65536;
+            _t = 0;
+        }
+        return sinLerp(_phase);
     }
     
 private:
@@ -764,6 +816,39 @@ private:
     
 };
 
+/**
+ * NOTE TO FUTURE PROGRAMMERS - How to make your very own synth!
+ * 
+ * You, yes YOU, can be a synth designer. All you need to do is implement Synth's
+ * one virtual method, "s16 getOutputSample(struct SoundInfo * sound)." To learn more
+ * about the SoundInfo struct, read the note just above its definition.
+ * 
+ * You can do pretty much anything you want to. Anything. I made one synthesizer that
+ * applies bubble sort to the sample! If you want you can ignore the piano entirely.
+ * You could make a synth that only plays the 42 Melody (look it up; it's cool). You
+ * don't even need to output audio if you don't want to! You could probably
+ * build your own custom Editor (see note by Editor class) and make your synth play
+ * Super Mario Bros using the piano keys.
+ * 
+ * Here are some words of advice.
+ * 1. The application feeds the output of "s16 frameOutput()" directly to the audio
+ *    stream without any interferance. "s16 frameOutput()" only adds up the output of
+ *    "s16 getOutputSample(struct SoundInfo * sound)" for each key. You implement this
+ *    method. You don't need to worry about anything messing with your audio but you.
+ * 2. This is 16 bit signed audio. If you're output is too loud, it'll overflow
+ *    and your ears may not like it (or you could do it intentionally because
+ *    you're into that kind of thing). Make sure that your output is quiet enough
+ *    to sound good when you're pressing several keys. If you're not sure whether
+ *    or not it'll be too loud, just run the program and check.
+ * 3. I know I said you can do pretty much anything, but unfortunately you'll probably
+ *    have to worry about sample rate. If the sample rate is too high, you'll
+ *    hear unpleasant popping noises as the CPU tries and fails to fill the audio buffer
+ *    as quickly as it needs to. The more calculation intensive you're synth is,
+ *    the lower the sample rate will have to be. Sorry.
+ * 
+ * For more information on how to connect your shiny new synth to the rest of the
+ * application, go to the note above the App class.
+ */
 class Synth {
 public:
     Synth(int gain, int samplingRate, bool sfzExportAvailable) :
@@ -771,6 +856,7 @@ public:
         _samplingRate{samplingRate},
         _sfzExportAvailable{sfzExportAvailable}
     {}
+
     virtual s16 frameOutput() {
         s16 output = 0;
         for (int i = 0; i < 13; i++) {
@@ -778,19 +864,177 @@ public:
         }
         return output;
     }
+
     void mmChangeSettings() {
         mmStreamClose();
         mystream.sampling_rate = _samplingRate;
         mmStreamOpen( &mystream );
     }
+    
+    bool isExporting() {
+        return wavExport.exporting;
+    }
 
-    virtual void exportSFZ() = 0;
+    struct wav_header {
+        char riff[4];
+        int32_t flength;
+        char wave[4];
+        char fmt[4];
+        int32_t chunk_size;
+        int16_t format_tag;
+        int16_t num_chans;
+        int32_t sample_rate;
+        int32_t bytes_per_second;
+        int16_t bytes_per_sample;
+        int16_t bits_per_sample;
+        char data[4];
+        int32_t dlength;
+    };
+
+    void exportSingleSample(FILE * sampleFile, int freq) {
+        //printf("exporting sample... ");
+        
+        struct wav_header wavh;
+        strncpy(wavh.riff, "RIFF", 4);
+        strncpy(wavh.wave, "WAVE", 4);
+        strncpy(wavh.fmt, "fmt ", 4);
+        strncpy(wavh.data, "data", 4);
+
+        wavh.chunk_size = 16;
+        wavh.format_tag = 1;
+        wavh.num_chans = 1;
+        wavh.sample_rate = _samplingRate;
+        wavh.bits_per_sample = 16;
+        wavh.bytes_per_sample = (wavh.bits_per_sample * wavh.num_chans) / 8;
+        wavh.bytes_per_second = wavh.sample_rate * wavh.bytes_per_sample;
+        wavh.dlength = 0;
+        wavh.flength = 0;
+
+        
+        wavExport.exporting = true;
+        
+        struct SoundInfo sampleInfo;
+        sampleInfo.playing = true;
+        sampleInfo.freq = freq;
+        sampleInfo.phaseFramesElapsed = 0;
+        sampleInfo.justPressed = true;
+        while (wavExport.exporting) { // first we need to find out how long the sample is going to be
+            getOutputSample(&sampleInfo);
+        }
+
+        wavh.dlength = (wavExport.exportFramesElapsed + 1) * wavh.bytes_per_sample;
+        wavh.flength = wavh.dlength + 44;
+
+        fwrite(&wavh, sizeof(wavh), 1, sampleFile);
+
+        //fseek(sampleFile, 45, SEEK_SET);
+        //struct SoundInfo sampleInfo;
+        sampleInfo.playing = true;
+        sampleInfo.freq = freq;
+        sampleInfo.phaseFramesElapsed = 0;
+        sampleInfo.justPressed = true;
+        wavExport.exporting = true;
+        while (wavExport.exporting) {
+            s16 output = getOutputSample(&sampleInfo);
+            fwrite(&output, sizeof(output), 1, sampleFile);
+        }
+
+        /*
+        wavh.dlength = (wavExport.exportFramesElapsed + 1) * wavh.bytes_per_sample;
+        wavh.flength = wavh.dlength + 44;
+        fseek(sampleFile, 0, SEEK_SET);
+        fwrite(&wavh, sizeof(wavh), 1, sampleFile);
+        */
+    }
+
+    /**
+     * NOTE FOR FUTURE PROGRAMMERS - How to implement sfz export
+     * 
+     * In order to implement sfz export in the synthesizer class of your choice, all you need
+     * to do is make sure that the synthesizer properly fills all of the fields of the
+     * exportFrameData struct called wavExport. wavExport is a protected member, so all children
+     * of Synth have a their own copy.
+     * 
+     * All you need to do is make sure that the synthesizer will:
+     * 1. increment wavExport.exportFramesElapsed every frame
+     * 2. set wavExport.exporting to false to finish sampling (otherwise it will infinitely loop)
+     * 3. set wavExport.loopStart and wavExport.loopEnd to the frames you will to loop around
+     */
+    void exportSFZ() {
+        pc->cursorX = 0;
+        pc->cursorY = 20;
+        if (!_sfzExportAvailable) {
+            printf("sfz export not available\n for this synth");
+            return;
+        }
+        printf("exporting");
+        FILE* sfz = fopen("WaveTableSynth/export.sfz", "w");
+        char global_parameters[] = "<global> loop_mode=loop_continuous\n\n";
+        fwrite(global_parameters, sizeof(char), strlen(global_parameters), sfz);
+        fclose(sfz);
+
+        MidiInfo midi = MidiInfo();
+        for (int midi_index = 0; midi_index < 128; midi_index++) {
+            char file_name[64];
+            sprintf(file_name, "WaveTableSynth/%s.wav", midi.info[midi_index].name);
+            FILE* sample = fopen(file_name, "w+");
+
+            exportSingleSample(sample, midi.info[midi_index].pitch);
+
+            //printf("past export sample");
+
+            fclose(sample);
+
+            sprintf(file_name, "%s.wav", midi.info[midi_index].name);
+
+            char sfz_region_data[128];
+            sprintf(
+                sfz_region_data,
+                "<region> sample=%s key=%d loop_start=%d loop_end=%d\n\n",
+                file_name,
+                midi.info[midi_index].midi_key_number,
+                wavExport.loopStart,
+                wavExport.loopEnd
+            );
+            sfz = fopen("WaveTableSynth/export.sfz", "a");
+            fwrite(sfz_region_data, sizeof(char), strlen(sfz_region_data), sfz);
+            fclose(sfz);
+
+            pc->cursorX = Lerp::lerp(0, PRINT_WIDTH, midi_index, 128);
+            pc->cursorY = 21;
+            printf("|");
+        }
+
+        fclose(sfz);
+        pc->cursorX = 0;
+        pc->cursorY = 20;
+        printf("done                ");
+    }
     
 protected:
     int _gain;
     int _samplingRate;
     bool _sfzExportAvailable;
+    
+    struct exportFrameData {
+        bool exporting; // while exporting is true, continue retrieving samples
+        int exportFramesElapsed; // the frame of the export we are on
+        int loopStart; // the sample at which the looping portion starts
+        int loopEnd; // the sample at which the looping portion ends
+    };
+
+    struct exportFrameData wavExport;
+    
     virtual s16 getOutputSample(struct SoundInfo * sound) = 0;
+};
+
+class EmptySynth : public Synth {
+public:
+    EmptySynth(int gain, int sampleRate) : Synth(gain, sampleRate, false) {}
+private:
+    s16 getOutputSample(struct SoundInfo * sound) {
+        return sound->playing?(((sound->phaseFramesElapsed++%(_samplingRate/sound->freq))>_samplingRate/(2*sound->freq))?_gain:-_gain):0;
+    }
 };
 
 /*class VariableLengthWavetable : public Synth {
@@ -1239,122 +1483,7 @@ public:
         }
     }
 
-    struct wav_header {
-        char riff[4];
-        int32_t flength;
-        char wave[4];
-        char fmt[4];
-        int32_t chunk_size;
-        int16_t format_tag;
-        int16_t num_chans;
-        int32_t sample_rate;
-        int32_t bytes_per_second;
-        int16_t bytes_per_sample;
-        int16_t bits_per_sample;
-        char data[4];
-        int32_t dlength;
-    };
-
-    void exportSingleSample(FILE * savefile, int freq) {
-        //printf("exporting sample... ");
-        
-        struct wav_header wavh;
-        strncpy(wavh.riff, "RIFF", 4);
-        strncpy(wavh.wave, "WAVE", 4);
-        strncpy(wavh.fmt, "fmt ", 4);
-        strncpy(wavh.data, "data", 4);
-
-        wavh.chunk_size = 16;
-        wavh.format_tag = 1;
-        wavh.num_chans = 1;
-        wavh.sample_rate = _samplingRate;
-        wavh.bits_per_sample = 16;
-        wavh.bytes_per_sample = (wavh.bits_per_sample * wavh.num_chans) / 8;
-        wavh.bytes_per_second = wavh.sample_rate * wavh.bytes_per_sample;
-
-        
-        wavExport.exporting = true;
-        struct SoundInfo sample;
-        sample.playing = true;
-        sample.freq = freq;
-        sample.phaseFramesElapsed = 0;
-        sample.justPressed = true;
-        while (wavExport.exporting) { // first we need to find out how long the sample is going to be
-            getOutputSample(&sample);
-        }
-
-        //printf("\nfirst pass: %d samples\n", wavExport.exportFramesElapsed);
-        
-        wavh.dlength = (wavExport.exportFramesElapsed + 1) * wavh.bytes_per_sample;
-        wavh.flength = wavh.dlength + 44;
-
-        //FILE* savefile = fopen(file_path, "w");
-        fwrite(&wavh, sizeof(wavh), 1, savefile);
-
-        //printf("made it past header. ");
-        
-        sample.playing = true;
-        sample.freq = freq;
-        sample.phaseFramesElapsed = 0;
-        sample.justPressed = true;
-        wavExport.exporting = true;
-        while (wavExport.exporting) {
-            s16 output = getOutputSample(&sample);
-            fwrite(&output, sizeof(output), 1, savefile);
-        }
-
-        //printf("made it past data export. ");
-
-        //printf("\nsecond pass: %d samples\n", wavExport.exportFramesElapsed);
-        
-        //printf("done exporting sample! %d bytes\n", wavh.flength);
-
-        //fclose(savefile);
-    }
-
-    void exportSFZ() {
-        pc->cursorX = 0;
-        pc->cursorY = 14;
-        printf("exporting");
-        FILE* sfz = fopen("WaveTableSynth/wable.sfz", "w");
-        char global_parameters[] = "<global> loop_mode=loop_continuous\n\n";
-        fwrite(global_parameters, sizeof(char), strlen(global_parameters), sfz);
-
-        MidiInfo midi = MidiInfo();
-        for (int midi_index = 0; midi_index < 128; midi_index++) {
-            char file_name[64];
-            sprintf(file_name, "WaveTableSynth/%s.wav", midi.info[midi_index].name);
-            FILE* sample = fopen(file_name, "w");
-
-            exportSingleSample(sample, midi.info[midi_index].pitch);
-
-            //printf("past export sample");
-
-            fclose(sample);
-
-            sprintf(file_name, "%s.wav", midi.info[midi_index].name);
-
-            char sfz_region_data[128];
-            sprintf(
-                sfz_region_data,
-                "<region> sample=%s key=%d loop_start=%d loop_end=%d\n\n",
-                file_name,
-                midi.info[midi_index].midi_key_number,
-                wavExport.loopStart,
-                wavExport.loopEnd
-            );
-            fwrite(sfz_region_data, sizeof(char), strlen(sfz_region_data), sfz);
-
-            pc->cursorX = Lerp::lerp(0, PRINT_WIDTH, midi_index, 128);
-            pc->cursorY = 15;
-            printf("|");
-        }
-
-        fclose(sfz);
-        pc->cursorX = 0;
-        pc->cursorY = 14;
-        printf("done                ");
-    }
+    
 private:
     s16 (&_wave1Array)[TABLE_LENGTH];
     s16 (&_wave2Array)[TABLE_LENGTH];
@@ -1370,15 +1499,7 @@ private:
 
     struct wableInfo infos[13];
 
-    struct exportFrameData {
-        bool exporting; // while exporting is true, continue retrieving samples
-        s16 sample; // the current sample to export
-        int exportFramesElapsed; // the frame of the export we are on
-        int loopStart; // the sample at which the looping portion starts
-        int loopEnd; // the sample at which the looping portion ends
-    };
-
-    struct exportFrameData wavExport;
+    
 
     int getWavePhase(struct SoundInfo * sound) {
 	    int phase = div32((sound->phaseFramesElapsed * sound->freq * TABLE_LENGTH), _samplingRate);
@@ -1497,11 +1618,9 @@ private:
             
             sound->lastSampleOutputted = _gain * output;
 
-            // if the sound is exporting, increment export frame count and set the sample to export
-            if (wavExport.exporting) {
+            // if the sound is exporting, increment export frame count
+            if (wavExport.exporting)
                 wavExport.exportFramesElapsed++;
-                wavExport.sample = _gain * output;
-            }
 
             return _gain * output;
         } else {
@@ -1520,18 +1639,36 @@ private:
 
 };
 
+/**
+ * NOTE TO FUTURE PROGRAMMERS - The App Class.
+ * 
+ * Welcome to the App class. An app object is in charge of handling button presses, sending
+ * the output of synthesizers to the audio stream, and connecting the many editors to
+ * synths and to one another.
+ * 
+ * Before I explain how to connect your lovingly crafted synthesizer to the rest of the
+ * application, I'd like you to come with me on a journey to the main loop. It's at the
+ * bottom of the file.
+ */
 class App {
 public:
     App() :
         synEdPairRing(), 
+
+        tutorialEditorRing(),
+        welcome("Welcome to the Wavetable Synth \n for the Nintendo DS!\n\nYou're probably wondering how to operate this application, but\n wonder no longer! I'm forcing\n you, yes YOU, to take part in\n a magnificent tutorial!\n\nPress the right shoulder button\n to continue. . ."),
+        tableTutorial("This is a table editor. In this\n application you will navigate \n through various editors that \n you can use to control the \n sound in several ways.\n\nTry drawing on the touch screen\n\nTo cycle through editor screens\n use shoulder buttons. Use the \n right shouder button to \n continue. . .", tutorialTable),
+        buttonsTutorial("There are three main ways to \n make sound with this app:\n 1. Pressing X to play a\n    testing tone\n 2. Using the Easy Piano Option\n    Pak\n 3. Exporting an sfz file to\n    use with other music\n    software\n\nUse the d-pad to change the\n root note of the app. Vertical\n directions for octave and \n horizontal for semitone.\n\nPress the right shoulder button\n to continue. . ."),
+        sfzExportTutorial("If you use the Konami Code\n while in a synth mode that\n supports sfz exporting, then\n sfz exporting will begin.\n Consult the README for file\n setup.\n\nHeadphones are suggested as the\n DS's speakers can be rather\n quiet.\n\nUse the select button to cycle\n through synth modes and exit\n this tutorial. . ."),
+        empth(1500, 20000),
         
         wavetableEditorRing(),
-        waveTableOne("Wavetable One", wave1Array),
-        waveTableTwo("Wavetable Two", wave2Array),
-        morphShapeTable("Transition Shape", transition),
-        morphTimeSlider("Transition Time\n Left:  0 seconds\n Right: 10 seconds", transitionTime, SAMPLING_RATE * 10),
-        algorithmSwitch("Transition Algorithm\n 1. Morph\n 2. Swipe\n 3. Combos", algorithm, 3),
-        transitionCycleSwitch("Transition Cycle Mode\n 1. Forward\n 2. Loop\n 3. Ping Pong", transitionCycle, 3),
+        waveTableOne("Wavetable One\n\nA wavetable synthesizer works\n by taking one period of a wave\n and looping through it at\n various frequencies.\n\nUse the table editor below to\n draw one period of a wave.", wave1Array),
+        waveTableTwo("Wavetable Two\n\nUse this editor to draw another\n wave.", wave2Array),
+        morphShapeTable("Transition Shape\n\nThis table editor isn't used to\n draw a wave. Instead, it is\n used to define how wave 1 will\n transition to wave 2 over time.\n\nFully up means only the first\n wave will play. Fully down\n means only the second wave\n plays. Halfway means a wave\n halfway between both waves\n plays.", transition),
+        morphTimeSlider("Transition Time\n Left:  0 seconds\n Right: 10 seconds\n\nThis slider determines how long\n it takes to go through the\n transition shape.", transitionTime, SAMPLING_RATE * 10),
+        algorithmSwitch("Transition Algorithm\n 1. Morph\n 2. Swipe\n 3. Combo\n\nWhat does halfway between two\n waves mean anyway?\n\nIn my opinion, I see two main\n ways of interpreting this:\n 1. morph: an average of both\n    waves\n 2. swipe: the first half of\n    wave 1 tacked onto the\n    second half of wave 2\n", algorithm, 3),
+        transitionCycleSwitch("Transition Cycle Mode\n 1. Forward\n 2. Loop\n 3. Ping Pong\n\nIn forward mode, when the right\n of the transition shape is\n reached, it stays at the right\nIn loop mode, when the right is\n reached, it loops back to the\n left of the transition shape\nIn ping-pong mode, when the\n right is reached, it starts\n going backwards to the left,\n then back to the right, ad\n infinitum.", transitionCycle, 3),
         wable(54, 10000, wave1Array, wave2Array, transition, transitionTime, algorithm, transitionCycle),
 
         pluckedEditorRing(),
@@ -1559,6 +1696,12 @@ public:
         fmRatioMultiSwitch("Operator Ratio", fmRatios, 4, 13),
         fam(1, 8192, fmAmpVals, fmRouting, fmRatios)
     {
+
+        tutorialEditorRing.add(&sfzExportTutorial);
+        tutorialEditorRing.add(&buttonsTutorial);
+        tutorialEditorRing.add(&tableTutorial);
+        tutorialEditorRing.add(&welcome);
+
         wavetableEditorRing.add(&transitionCycleSwitch);
         wavetableEditorRing.add(&algorithmSwitch);
         wavetableEditorRing.add(&morphTimeSlider);
@@ -1583,6 +1726,7 @@ public:
         synEdPairRing.add(new SynEdPair("NOVELTY\n\n", &noveltyEditorRing, &novel));
         synEdPairRing.add(new SynEdPair("PLUCKED STRING\n\n", &pluckedEditorRing, &pling));
         synEdPairRing.add(new SynEdPair("WAVETABLE SYNTH\n\n", &wavetableEditorRing, &wable));
+        synEdPairRing.add(new SynEdPair("TUTORIAL\n\n", &tutorialEditorRing, &empth));
         
     }
 
@@ -1619,7 +1763,11 @@ public:
      * it returns the sample to output
      */
     s16 ExecuteOneStreamLoop() {
-        return synEdPairRing.curr()->getSynth()->frameOutput();
+        if (synEdPairRing.curr()->getSynth()->isExporting()) {
+            return 0;
+        } else {
+            return synEdPairRing.curr()->getSynth()->frameOutput();
+        }
     }
 
 private:
@@ -1658,6 +1806,14 @@ private:
     };
 
     LinkedRing<SynEdPair *> synEdPairRing;
+
+    LinkedRing<Editor *> tutorialEditorRing;
+    EmptyEditor welcome;
+    s16 tutorialTable[TABLE_LENGTH];
+    Table tableTutorial;
+    EmptyEditor buttonsTutorial;
+    EmptyEditor sfzExportTutorial;
+    EmptySynth empth;
 
     LinkedRing<Editor *> wavetableEditorRing;
     s16 wave1Array[TABLE_LENGTH];
@@ -1734,8 +1890,7 @@ private:
 			piano.incPitch();
 		if (keysD & KEY_LEFT)
 			piano.decPitch();
-        int keysH = keysHeld();
-        if (keysH & KEY_X)
+        if (keysD & KEY_X)
             piano.playTestTone();
         int keysU = keysUp();
         if (keysU & KEY_X)
@@ -1765,13 +1920,14 @@ mm_word on_stream_request( mm_word length, mm_addr dest, mm_stream_formats forma
 
 
 
-/**********************************************************************************
- * main
- *
- * Program Entry Point
- **********************************************************************************/
+/**
+ * NOTE FOR FUTURE PROGRAMMERS - What does the App class actually do?
+ * 
+ * As you look through the main function you may see some things you don't
+ * understand. But look past the strange and unusual parts and come with me
+ * to the endless while loop down below.
+ */
 int main( void ) {
-//---------------------------------------------------------------------------------
 	pc = consoleDemoInit();
 	
     if (fatInitDefault())
@@ -1814,7 +1970,9 @@ int main( void ) {
 	mystream.manual			= true;						// use manual filling
 	mmStreamOpen( &mystream );
 
-
+    /**
+     * 
+     */
 	while( 1 )
 	{
 		
