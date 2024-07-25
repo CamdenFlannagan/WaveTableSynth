@@ -1669,7 +1669,7 @@ public:
         morphTimeSlider("Transition Time\n Left:  0 seconds\n Right: 10 seconds\n\nThis slider determines how long\n it takes to go through the\n transition shape.", transitionTime, SAMPLING_RATE * 10),
         algorithmSwitch("Transition Algorithm\n 1. Morph\n 2. Swipe\n 3. Combo\n\nWhat does halfway between two\n waves mean anyway?\n\nIn my opinion, I see two main\n ways of interpreting this:\n 1. morph: an average of both\n    waves\n 2. swipe: the first half of\n    wave 1 tacked onto the\n    second half of wave 2\n", algorithm, 3),
         transitionCycleSwitch("Transition Cycle Mode\n 1. Forward\n 2. Loop\n 3. Ping Pong\n\nIn forward mode, when the right\n of the transition shape is\n reached, it stays at the right\nIn loop mode, when the right is\n reached, it loops back to the\n left of the transition shape\nIn ping-pong mode, when the\n right is reached, it starts\n going backwards to the left,\n then back to the right, ad\n infinitum.", transitionCycle, 3),
-        wable(54, 10000, wave1Array, wave2Array, transition, transitionTime, algorithm, transitionCycle),
+        wable(31, 10000, wave1Array, wave2Array, transition, transitionTime, algorithm, transitionCycle),
 
         pluckedEditorRing(),
         drumSlider("Blend Factor\n Left:   ???\n Middle: Drum\n Right:  Plucked String", blendFactor, TABLE_LENGTH),

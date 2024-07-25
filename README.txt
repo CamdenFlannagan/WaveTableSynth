@@ -2,6 +2,7 @@ README
 
 WaveTableSynth For The Nintendo DS Version 1.00
 Camden Flannagan (Yamden), 2024
+source: https://github.com/CamdenFlannagan/WaveTableSynth
 
 -------------------------------------
 Installation:

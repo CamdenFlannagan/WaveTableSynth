@@ -5897,39 +5897,39 @@ OUTPUT(C:/devkitPro/examples/nds/camde_work/WaveTableSynth/WaveTableSynth.elf el
 LOAD linker stubs
 
 .debug_loclists
-                0x00000000     0x8d86
+                0x00000000     0x8d84
  .debug_loclists
-                0x00000000     0x56fe main.o
+                0x00000000     0x56fc main.o
  .debug_loclists
-                0x000056fe      0x779 C:/devkitPro/libnds/lib\libnds9.a(trig.o)
+                0x000056fc      0x779 C:/devkitPro/libnds/lib\libnds9.a(trig.o)
  .debug_loclists
-                0x00005e77      0x1da C:/devkitPro/libnds/lib\libnds9.a(video.o)
+                0x00005e75      0x1da C:/devkitPro/libnds/lib\libnds9.a(video.o)
  .debug_loclists
-                0x00006051       0x8f C:/devkitPro/libnds/lib\libnds9.a(touch.o)
+                0x0000604f       0x8f C:/devkitPro/libnds/lib\libnds9.a(touch.o)
  .debug_loclists
-                0x000060e0      0xf6c C:/devkitPro/libnds/lib\libnds9.a(console.o)
+                0x000060de      0xf6c C:/devkitPro/libnds/lib\libnds9.a(console.o)
  .debug_loclists
-                0x0000704c       0x18 C:/devkitPro/libnds/lib\libnds9.a(piano.o)
+                0x0000704a       0x18 C:/devkitPro/libnds/lib\libnds9.a(piano.o)
  .debug_loclists
-                0x00007064       0x17 C:/devkitPro/libnds/lib\libnds9.a(keys.o)
+                0x00007062       0x17 C:/devkitPro/libnds/lib\libnds9.a(keys.o)
  .debug_loclists
-                0x0000707b      0x26e C:/devkitPro/libnds/lib\libnds9.a(dldi.o)
+                0x00007079      0x26e C:/devkitPro/libnds/lib\libnds9.a(dldi.o)
  .debug_loclists
-                0x000072e9       0xc5 C:/devkitPro/libnds/lib\libnds9.a(initSystem.o)
+                0x000072e7       0xc5 C:/devkitPro/libnds/lib\libnds9.a(initSystem.o)
  .debug_loclists
-                0x000073ae      0x1a5 C:/devkitPro/libnds/lib\libnds9.a(interrupts.o)
+                0x000073ac      0x1a5 C:/devkitPro/libnds/lib\libnds9.a(interrupts.o)
  .debug_loclists
-                0x00007553       0x48 C:/devkitPro/libnds/lib\libnds9.a(libnds_exit.arm.o)
+                0x00007551       0x48 C:/devkitPro/libnds/lib\libnds9.a(libnds_exit.arm.o)
  .debug_loclists
-                0x0000759b      0x4ac C:/devkitPro/libnds/lib\libnds9.a(card.o)
+                0x00007599      0x4ac C:/devkitPro/libnds/lib\libnds9.a(card.o)
  .debug_loclists
-                0x00007a47      0xe1a C:/devkitPro/libnds/lib\libnds9.a(fifosystem.o)
+                0x00007a45      0xe1a C:/devkitPro/libnds/lib\libnds9.a(fifosystem.o)
  .debug_loclists
-                0x00008861      0x2a3 C:/devkitPro/libnds/lib\libnds9.a(background.o)
+                0x0000885f      0x2a3 C:/devkitPro/libnds/lib\libnds9.a(background.o)
  .debug_loclists
-                0x00008b04      0x140 C:/devkitPro/libnds/lib\libnds9.a(system.o)
+                0x00008b02      0x140 C:/devkitPro/libnds/lib\libnds9.a(system.o)
  .debug_loclists
-                0x00008c44      0x142 C:/devkitPro/libnds/lib\libnds9.a(sd.twl.o)
+                0x00008c42      0x142 C:/devkitPro/libnds/lib\libnds9.a(sd.twl.o)
 
 .debug_rnglists
                 0x00000000     0x1e41
