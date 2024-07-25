@@ -968,7 +968,7 @@ public:
             return;
         }
         printf("exporting");
-        FILE* sfz = fopen("WaveTableSynth/export.sfz", "w");
+        FILE* sfz = fopen("sfz/export.sfz", "w");
         char global_parameters[] = "<global> loop_mode=loop_continuous\n\n";
         fwrite(global_parameters, sizeof(char), strlen(global_parameters), sfz);
         fclose(sfz);
@@ -976,7 +976,7 @@ public:
         MidiInfo midi = MidiInfo();
         for (int midi_index = 0; midi_index < 128; midi_index++) {
             char file_name[64];
-            sprintf(file_name, "WaveTableSynth/%s.wav", midi.info[midi_index].name);
+            sprintf(file_name, "sfz/%s.wav", midi.info[midi_index].name);
             FILE* sample = fopen(file_name, "w+");
 
             exportSingleSample(sample, midi.info[midi_index].pitch);
@@ -996,7 +996,7 @@ public:
                 wavExport.loopStart,
                 wavExport.loopEnd
             );
-            sfz = fopen("WaveTableSynth/export.sfz", "a");
+            sfz = fopen("sfz/export.sfz", "a");
             fwrite(sfz_region_data, sizeof(char), strlen(sfz_region_data), sfz);
             fclose(sfz);
 
@@ -1919,14 +1919,6 @@ mm_word on_stream_request( mm_word length, mm_addr dest, mm_stream_formats forma
 }
 
 
-
-/**
- * NOTE FOR FUTURE PROGRAMMERS - What does the App class actually do?
- * 
- * As you look through the main function you may see some things you don't
- * understand. But look past the strange and unusual parts and come with me
- * to the endless while loop down below.
- */
 int main( void ) {
 	pc = consoleDemoInit();
 	
