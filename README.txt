@@ -1,7 +1,7 @@
 README
 
 WaveTableSynth For The Nintendo DS Version 1.00
-Camden Flannagan (Yamden), 2024
+Camden Flannagan, 2024
 source: https://github.com/CamdenFlannagan/WaveTableSynth
 
 -------------------------------------
@@ -19,7 +19,7 @@ D-Pad Vertical - Move root note up and down by octaves
 D-Pad Horizontal - Move root note up and down by semitones
 L/R - Cycle through editors for various parameters
 Select - Cycle through synth modes
-Konami Code - Export an sfz file in synth modes where exporting sfz is available
+Konami Code - Export an sfz file in synth modes where exporting sfz is available. (The Konami Code is up, up, down, down, left, right, A, B, start.)
 
 Notes for SFZ Export:
 - The sfz file and wav files will be stored in the folder "sfz"

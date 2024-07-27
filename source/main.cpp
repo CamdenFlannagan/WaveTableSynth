@@ -1922,11 +1922,12 @@ mm_word on_stream_request( mm_word length, mm_addr dest, mm_stream_formats forma
 int main( void ) {
 	pc = consoleDemoInit();
 	
+    
     if (fatInitDefault())
-		printf("LibFat succesful init\n");
+	    printf("LibFat succesful init\n");
 	else
-		printf("LibFat ini'nt succesful\n");
-	NF_SetRootFolder("WaveTableSynth");
+	    printf("LibFat ini'nt succesful\n");
+    //NF_SetRootFolder("sfz");
 
 	videoSetMode(MODE_FB0);
 	vramSetBankA(VRAM_A_LCD);
