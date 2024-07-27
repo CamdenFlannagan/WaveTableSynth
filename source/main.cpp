@@ -1503,6 +1503,25 @@ private:
 
     int getWavePhase(struct SoundInfo * sound) {
 	    int phase = div32((sound->phaseFramesElapsed * sound->freq * TABLE_LENGTH), _samplingRate);
+        
+        /*phase %= TABLE_LENGTH;
+        sound->phaseFramesElapsed %= _samplingRate;
+        if (sound->phaseFramesElapsed == 0) {
+            if (wavExport.exporting) {
+                // if the transition cycle is in forward mode and the export frames elapsed is greater than the max transition time,
+                // then we need to start setting up loop points and end the exporting process
+                if (_transitionCycle == 0 && wavExport.exportFramesElapsed > _transitionTime) {
+                    if (wavExport.loopStart == -1) {
+                        wavExport.loopStart = wavExport.exportFramesElapsed;
+                    } else {
+                        wavExport.loopEnd = wavExport.exportFramesElapsed;
+                        wavExport.exporting = false;
+                    }
+                }
+            }
+        }
+        return phase;*/
+
         if (phase > 8 * TABLE_LENGTH) {
             sound->phaseFramesElapsed = 0;
             if (wavExport.exporting) {
@@ -1512,7 +1531,7 @@ private:
                     if (wavExport.loopStart == -1) {
                         wavExport.loopStart = wavExport.exportFramesElapsed;
                     } else {
-                        wavExport.loopEnd = wavExport.exportFramesElapsed;
+                        wavExport.loopEnd = wavExport.exportFramesElapsed - 1;
                         wavExport.exporting = false;
                     }
                 }
@@ -1537,7 +1556,7 @@ private:
                 info->transitionFramesElapsed = (info->transitionFramesElapsed + 1) % _transitionTime;
                 if (wavExport.exporting && wavExport.exportFramesElapsed >= _transitionTime) {
                     wavExport.loopStart = 0;
-                    wavExport.loopEnd = wavExport.exportFramesElapsed;
+                    wavExport.loopEnd = wavExport.exportFramesElapsed - 1;
                     wavExport.exporting = false;
                 }
                 break;
@@ -1550,7 +1569,7 @@ private:
                         info->pingPongDirection = true;
                         if (wavExport.exporting) {
                             wavExport.loopStart = 0;
-                            wavExport.loopEnd = wavExport.exportFramesElapsed;
+                            wavExport.loopEnd = wavExport.exportFramesElapsed - 1;
                             wavExport.exporting = false;
                         }
                     }
