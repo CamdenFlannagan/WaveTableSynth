@@ -7,6 +7,8 @@ source: https://github.com/CamdenFlannagan/WaveTableSynth
 -------------------------------------
 Installation:
 
+Extract the contents of "WaveTableSynth.zip". It has everything you need
+
 Make sure that the file "WaveTableSynth.nds" and the folder "sfz" are on the same level
 of your drive
 
